@@ -8,7 +8,7 @@
 #include <linux/hrtimer.h>
 #include <linux/delay.h>
 #include <linux/kobject.h>
-#define _INCLUDE_DHT22_EXP
+#define _INCLUDE_DHT22_EXP_DECL
 #include "dht22_exp.h"
 
 static const int    high = 1;
@@ -58,11 +58,10 @@ static struct attribute_group attr_group = {
  * other global static vars
  */
 static int                  irq_number;
-static struct hrtimer       wait_timer;
+static struct hrtimer       autoupdate_timer;
 static struct hrtimer       timeout_timer;
 static struct timespec64    prev_time;
-static int                  timeout_time = 1;       /* second */
-static int                  autoupdate_time = 10;   /* second */
+static const int            timeout_time = 1;       /* second */
 static int                  low_irq_count = 0;
 static int                  humidity = 0;
 static int                  temperature = 0;
@@ -85,7 +84,6 @@ static DECLARE_WORK(process, process_results);
 static int __init dht22_init(void)
 {
     int     ret;
-    ktime_t wait_time;
 
     pr_err("Loading dht22_exp module...\n");
 
@@ -152,11 +150,12 @@ static int __init dht22_init(void)
 
     /*
      * wait for 2sec for the first trigger
+     * no matter autoupdate is on or off
+     * at least DHT22 will be triggered once
      */
-    wait_time = ktime_set(2, 0);
-    hrtimer_init(&wait_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    wait_timer.function = wait_func;
-    hrtimer_start(&wait_timer, wait_time, HRTIMER_MODE_REL);
+    hrtimer_init(&autoupdate_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    autoupdate_timer.function = autoupdate_func;
+    hrtimer_start(&autoupdate_timer, ktime_set(2,0), HRTIMER_MODE_REL);
     /*
      * setup timeout timer, but not start yet
      * it'll start when triggering DHT22 to send data
@@ -181,11 +180,43 @@ static void __exit dht22_exit(void)
     free_irq(irq_number, NULL);
     gpio_unexport(gpio);
     gpio_free(gpio);
-    hrtimer_cancel(&wait_timer);
+    hrtimer_cancel(&autoupdate_timer);
     hrtimer_cancel(&timeout_timer);
     cancel_work_sync(&process);
     kobject_put(dht22_kobj);
     pr_err("dht22_exp unloaded.\n");
+}
+
+static void to_trigger_dht22(void)
+{
+    /*
+     * DHT22 working in progress, ignore this event
+     */
+    if (dht22_working == dht22_state)
+    {
+        pr_info("DHT22 is busy, ignore trigger event.....\n");
+        return;
+    }
+    /*
+     * reset statictics counter and set state as 'dht22_working'
+     */
+    low_irq_count = 0;
+    dht22_state   = dht22_working;
+#if 0
+    irq_count = 0;
+#endif
+
+    /*
+     * start timeout_timer
+     * if the host can't receive 86 interrupts, the timeout_func() will
+     * reset state to 'dht22_idle'
+     */
+    hrtimer_start(&timeout_timer, ktime_set(timeout_time, 0), HRTIMER_MODE_REL);
+    /*
+     * trigger DHT22, then wait 10 more seconds to re-trigger again
+     */
+    getnstimeofday64(&prev_time);
+    trigger_dht22();
 }
 
 static void trigger_dht22(void)
@@ -229,30 +260,17 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
     return HRTIMER_NORESTART;
 }
 
-static enum hrtimer_restart wait_func(struct hrtimer *hrtimer)
+static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer)
 {
-    /*
-     * reset statictics counter and set state as 'dht22_working'
-     */
-    low_irq_count = 0;
-    dht22_state   = dht22_working;
-#if 0
-    irq_count = 0;
-#endif
+    to_trigger_dht22();
 
-    /*
-     * start timeout_timer
-     * if the host can't receive 86 interrupts, the timeout_func() will
-     * reset state to 'dht22_idle'
-     */
-    hrtimer_start(&timeout_timer, ktime_set(timeout_time, 0), HRTIMER_MODE_REL);
-    /*
-     * trigger DHT22, then wait 10 more seconds to re-trigger again
-     */
-    getnstimeofday64(&prev_time);
-    trigger_dht22();
-    hrtimer_forward(hrtimer, ktime_get(), ktime_set(autoupdate_time, 0));
-    return  HRTIMER_RESTART;
+    if (autoupdate)
+    {
+        hrtimer_forward(hrtimer, ktime_get(), ktime_set(autoupdate_sec, 0));
+        return HRTIMER_RESTART;
+    }
+    else
+        return HRTIMER_NORESTART;
 }
 
 static void process_results(struct work_struct* work)
@@ -262,9 +280,6 @@ static void process_results(struct work_struct* work)
     int raw_humidity;
     int raw_temp;
     int byte;
-
-    pr_info("DHT22 raw data 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
-            data[0], data[1], data[2], data[3], data[4] );
 
     /* 
      * determine bit value 0 or 1
@@ -277,6 +292,9 @@ static void process_results(struct work_struct* work)
         data[(byte = i/8)] <<= 1;
         data[byte        ]  |= (irq_time[i] > 50); 
     }
+
+    pr_info("DHT22 raw data 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+            data[0], data[1], data[2], data[3], data[4] );
 
     raw_humidity = (data[0] << 8) + data[1];
     raw_temp     = (data[2] << 8) + data[3];
@@ -382,13 +400,21 @@ static DECL_ATTR_SHOW (autoupdate)
 static DECL_ATTR_STORE(autoupdate)
 {
     int tmp;
+    int new_auto;
 
     sscanf(buf, "%d\n", &tmp);
-    autoupdate = 1 == tmp;
+    new_auto = 0 != tmp;
 
-    /*
-     * TODO: try to trigger if old value is 0
-     */
+    if (new_auto != autoupdate)
+    {
+        autoupdate = new_auto;
+        if (autoupdate && dht22_idle == dht22_state)
+        {
+            hrtimer_start(&autoupdate_timer, 
+                          ktime_set(autoupdate_sec,0), 
+                          HRTIMER_MODE_REL);
+        }
+    }
 
     return count;
 }
@@ -404,9 +430,8 @@ static DECL_ATTR_STORE(autoupdate_sec)
 
     sscanf(buf, "%d\n", &tmp);
 
-    /*
-     * TODO: update 'autoupdate_sec' var
-     */
+    if (tmp >= AUTOUPDATE_SEC_MIN && tmp <= AUTOUPDATE_SEC_MAX)
+        autoupdate_sec = tmp;
 
     return count;
 }
@@ -423,9 +448,7 @@ static DECL_ATTR_SHOW (temperature)
 
 static DECL_ATTR_STORE(trigger)
 {
-    /*
-     * TODO: to trigger DHT22 again
-     */
+    to_trigger_dht22();
     return count;
 }
 
