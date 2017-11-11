@@ -1,16 +1,20 @@
-Correct interrupt sequence
+Correct interrupt sequence (86 interrupts, 0..85)
 value: GPIO value, 0(LOW) and 1(HIGH)
 TIME : usec
 
-....interrupt 0,  value(0), time(14)   host begin pull low
+....interrupt 0,  value(0), time(14)   host begin pull low to notify DHT22
 ....interrupt 1,  value(1), time(1006) host release to high, pull low time 14us
-....interrupt 2,  value(0), time(19) DHT22 response to pull low
-....interrupt 3,  value(1), time(77) DHT22 end response and release high, pull low time 19us
+....interrupt 2,  value(0), time(19) DHT22 response to pull low 
+                                     dont' care about time
+....interrupt 3,  value(1), time(77) DHT22 end response and 
+                                     release bus to high, pull low time 19us
 ....interrupt 4,  value(0), time(80) DHT22 pull low to send bit 0
 ....interrupt 5,  value(1), time(53) DHT22 release to end   bit 0
-....interrupt 6,  value(0), time(25) DHT22 pull low to send bit 1 (host to record bit 0 high time)
+....interrupt 6,  value(0), time(25) DHT22 pull low to send bit 1 
+                                     host to record bit 0 high time, 53us
 ....interrupt 7,  value(1), time(54) DHT22 release to end   bit 1
-....interrupt 8,  value(0), time(25) DHT22 pull low to send bit 2 (host to record bit 1 high time)
+....interrupt 8,  value(0), time(25) DHT22 pull low to send bit 2 
+                                     host to record bit 1 high time, 54us
 ....interrupt 9,  value(1), time(54) bit 2  
 ....interrupt 10, value(0), time(25) bit 3 
 ....interrupt 11, value(1), time(54) bit 3
@@ -84,10 +88,14 @@ TIME : usec
 ....interrupt 79, value(1), time(53) bit 37
 ....interrupt 80, value(0), time(26) bit 38
 ....interrupt 81, value(1), time(53) bit 38
-....interrupt 82, value(0), time(26) DHT22 pull low to send bit 39 (host to record bit 38 high time)
+....interrupt 82, value(0), time(26) DHT22 pull low to send bit 39 
+                                     host to record bit 38 high time, 53us
 ....interrupt 83, value(1), time(53) DHT22 release to end   bit 39
-....interrupt 84, value(0), time(72) DHT22 pull low to signal end of data, host to record bit 39 high time
-humidity    = 79.5     host to calculate humidity/temperature/crc data
+....interrupt 84, value(0), time(72) DHT22 pull low to signal end of data, 
+                                     host to record bit 39 high time, 53us
+
+host to calculate humidity/temperature/crc data, and pr_info()
+humidity    = 79.5     
 temperature = 25.1
 crc = 0x0019 correct
 ....interrupt 85, value(1), time(46)

@@ -33,12 +33,12 @@ MODULE_PARM_DESC(autoupdate_sec,
 /*
  * module's attributes
  */
-static struct kobj_attribute gpio_attr = __ATTR_RO(gpio);
-static struct kobj_attribute autoupdate_attr = __ATTR_RW(autoupdate);
+static struct kobj_attribute gpio_attr           = __ATTR_RO(gpio);
+static struct kobj_attribute autoupdate_attr     = __ATTR_RW(autoupdate);
 static struct kobj_attribute autoupdate_sec_attr = __ATTR_RW(autoupdate_sec);
-static struct kobj_attribute humidity_attr = __ATTR_RO(humidity);
-static struct kobj_attribute temperature_attr = __ATTR_RO(temperature);
-static struct kobj_attribute trigger_attr = __ATTR_WO(trigger);
+static struct kobj_attribute humidity_attr       = __ATTR_RO(humidity);
+static struct kobj_attribute temperature_attr    = __ATTR_RO(temperature);
+static struct kobj_attribute trigger_attr        = __ATTR_WO(trigger);
 
 static struct attribute* dht22_attrs[] = {
     &gpio_attr.attr,
@@ -61,13 +61,13 @@ static int                  irq_number;
 static struct hrtimer       autoupdate_timer;
 static struct hrtimer       timeout_timer;
 static struct timespec64    prev_time;
-static const int            timeout_time = 1;       /* second */
+static const int            timeout_time = 1;  /* timeout(sec) after trigger */
 static int                  low_irq_count = 0;
-static int                  humidity = 0;
-static int                  temperature = 0;
+static int                  humidity = 0;      /* cache last humidity */
+static int                  temperature = 0;   /* cache last temperature */
 static struct kobject*      dht22_kobj;
 #if 0
-static int                  irq_count = 0;
+static int                  irq_count = 0;     /* for test purpose only */
 #endif
 
 /*
@@ -78,7 +78,10 @@ static int                  irq_count = 0;
 static int                  irq_time[40] = { 0 };
 static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
 
-/* task queue for calculating humidity/temperature/crc(parity check) */
+/* 
+ * queue work to calculate humidity/temperature/crc(parity check) 
+ * make IRQ handler to return as soon as possible
+ */
 static DECLARE_WORK(process, process_results);
 
 static int __init dht22_init(void)
@@ -121,7 +124,7 @@ static int __init dht22_init(void)
             IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
             "dht22_irq_handler",
             NULL);
-    if (ret < 0 )
+    if (ret < 0)
     {
         pr_err("idht22_exp failed to request IRQ, unloaded.\n");
         goto free_gpio;
@@ -158,7 +161,7 @@ static int __init dht22_init(void)
     hrtimer_start(&autoupdate_timer, ktime_set(2,0), HRTIMER_MODE_REL);
     /*
      * setup timeout timer, but not start yet
-     * it'll start when triggering DHT22 to send data
+     * it'll start when triggering DHT22 to request data
      */
     hrtimer_init(&timeout_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     timeout_timer.function = timeout_func;
@@ -203,7 +206,7 @@ static void to_trigger_dht22(void)
     low_irq_count = 0;
     dht22_state   = dht22_working;
 #if 0
-    irq_count = 0;
+    irq_count     = 0;
 #endif
 
     /*
@@ -213,7 +216,7 @@ static void to_trigger_dht22(void)
      */
     hrtimer_start(&timeout_timer, ktime_set(timeout_time, 0), HRTIMER_MODE_REL);
     /*
-     * trigger DHT22, then wait 10 more seconds to re-trigger again
+     * trigger DHT22
      */
     getnstimeofday64(&prev_time);
     trigger_dht22();
@@ -284,20 +287,20 @@ static void process_results(struct work_struct* work)
     /* 
      * determine bit value 0 or 1
      * 22-30us is 0, 68~75us is 1
-     * since DHT22 may be not as precise as spec, threshoud 50 is used for
+     * since DHT22 may be not as precise as spec, threshoud 50us is used for
      * decision making
      */
     for (i = 0; i < 40; i++)
     {
-        data[(byte = i/8)] <<= 1;
-        data[byte        ]  |= (irq_time[i] > 50); 
+        data[(byte = (i>>3))] <<= 1;
+        data[byte           ]  |= (irq_time[i] > 50); 
     }
 
-    pr_info("DHT22 raw data 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+    pr_info("DHT22 raw data 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
             data[0], data[1], data[2], data[3], data[4] );
 
-    raw_humidity = (data[0] << 8) + data[1];
-    raw_temp     = (data[2] << 8) + data[3];
+    raw_humidity = (data[0] << 8) | data[1];
+    raw_temp     = (data[2] << 8) | data[3];
     /*
      * be aware of temperature below 0°C 
      */
@@ -314,7 +317,7 @@ static void process_results(struct work_struct* work)
     {
         humidity    = raw_humidity;
         temperature = raw_temp;
-        pr_info("crc = 0x%04x correct\n", data[4] );
+        pr_info("crc = 0x%04X correct\n", data[4] );
     }
     else
         pr_info("crc error\n");
@@ -329,13 +332,13 @@ static void process_results(struct work_struct* work)
 
 static irqreturn_t dht22_irq_handler(int irq, void* data)
 {
-    int                         val = gpio_get_value(gpio);
-    static const int            h_pos = 3;      /* begin humidity low */
-    static const int            f_pos = 43;     /* begin finish low */
-    struct timespec64           now;
-    struct timespec64           diff;
+    int               val = gpio_get_value(gpio);
+    static const int  h_pos = 3;      /* begin humidity low */
+    static const int  f_pos = 43;     /* begin finish low */
+    struct timespec64 now;
+    struct timespec64 diff;
 #if 0
-    int                         time_interval;
+    int               time_interval;
 #endif
 
     getnstimeofday64(&now);
@@ -365,7 +368,7 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
 
             /*
              * DHT22 begin to signal end of delivering data
-             * calculating 40 bits' value (0 or 1)
+             * calculating 40 bits' value (0 or 1) via queue work
              */
             if (low_irq_count == f_pos-1)
                 queue_work(system_highpri_wq, &process);
@@ -378,25 +381,37 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
 }
 
 /*
-#define DECL_ATTR_SHOW(F)  ssize_t F ## _show (struct kobject*,\
-                                               struct kobj_attribute*,\
-                                               char*)
-#define DECL_ATTR_STORE(F) ssize_t F ## _store(struct kobject*,\
-                                               struct kobj_attribute*,\
-                                               const char*,\
+ * sysfs attributes
+ * the followings two declared in dht22_exp.h
+ *
+#define DECL_ATTR_SHOW(F)  ssize_t F ## _show (struct kobject* kobj,\
+                                               struct kobj_attribute* attr,\
+                                               char* buf)
+#define DECL_ATTR_STORE(F) ssize_t F ## _store(struct kobject* kobj,\
+                                               struct kobj_attribute* attr,\
+                                               const char* buf,\
                                                size_t count)
 */
 
+/*
+ * cat gpio
+ */
 static DECL_ATTR_SHOW (gpio)
 {
     return sprintf(buf, "%d\n", gpio);
 }
 
+/* 
+ * cat autoupdate
+ */
 static DECL_ATTR_SHOW (autoupdate)
 {
     return sprintf(buf, "%d\n", autoupdate);
 }
 
+/*
+ * echo 1 > autoupdate
+ */
 static DECL_ATTR_STORE(autoupdate)
 {
     int tmp;
@@ -419,11 +434,17 @@ static DECL_ATTR_STORE(autoupdate)
     return count;
 }
 
+/*
+ * cat autoupdate_sec
+ */
 static DECL_ATTR_SHOW (autoupdate_sec)
 {
     return sprintf(buf, "%d\n", autoupdate_sec);
 }
 
+/*
+ * echo 10 > autoupdate_sec
+ */
 static DECL_ATTR_STORE(autoupdate_sec)
 {
     int tmp;
@@ -436,16 +457,25 @@ static DECL_ATTR_STORE(autoupdate_sec)
     return count;
 }
 
+/*
+ * cat humidity
+ */
 static DECL_ATTR_SHOW (humidity)
 {
     return sprintf(buf, "%d.%d%%\n", humidity/10, humidity%10);
 }
 
+/*
+ * cat temperature
+ */
 static DECL_ATTR_SHOW (temperature)
 {
     return sprintf(buf, "%d.%d°C\n", temperature/10, abs(temperature)%10);
 }
 
+/*
+ * echo 1 > trigger
+ */
 static DECL_ATTR_STORE(trigger)
 {
     to_trigger_dht22();

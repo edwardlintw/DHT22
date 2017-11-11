@@ -6,6 +6,9 @@
 #define AUTOUPDATE_SEC_MIN      3     /* 3 seconds */
 #define AUTOUPDATE_SEC_MAX      60000 /* 10 min */
 
+/*
+ * proprietary to dht22.c, not seen by others
+ */
 #ifdef _INCLUDE_DHT22_EXP_DECL
 
 static void process_results(struct work_struct* work);
@@ -33,5 +36,7 @@ static DECL_ATTR_SHOW (humidity);
 static DECL_ATTR_SHOW (temperature);
 static DECL_ATTR_STORE(trigger);
 
-#endif
-#endif
+#endif /* _INCLUDE_DHT22_EXP_DECL */
+
+#endif /*_DHT22_EXP_H */
+
