@@ -1,0 +1,93 @@
+Correct interrupt sequence
+value: GPIO value, 0(LOW) and 1(HIGH)
+TIME : usec
+
+....interrupt 0,  value(0), time(14)   host begin pull low
+....interrupt 1,  value(1), time(1006) host release to high, pull low time 14us
+....interrupt 2,  value(0), time(19) DHT22 response to pull low
+....interrupt 3,  value(1), time(77) DHT22 end response and release high, pull low time 19us
+....interrupt 4,  value(0), time(80) DHT22 pull low to send bit 0
+....interrupt 5,  value(1), time(53) DHT22 release to end   bit 0
+....interrupt 6,  value(0), time(25) DHT22 pull low to send bit 1 (host to record bit 0 high time)
+....interrupt 7,  value(1), time(54) DHT22 release to end   bit 1
+....interrupt 8,  value(0), time(25) DHT22 pull low to send bit 2 (host to record bit 1 high time)
+....interrupt 9,  value(1), time(54) bit 2  
+....interrupt 10, value(0), time(25) bit 3 
+....interrupt 11, value(1), time(54) bit 3
+....interrupt 12, value(0), time(25) bit 4
+....interrupt 13, value(1), time(54) bit 4
+....interrupt 14, value(0), time(25) bit 5
+....interrupt 15, value(1), time(54) bit 5
+....interrupt 16, value(0), time(25) bit 6
+....interrupt 17, value(1), time(54) bit 6
+....interrupt 18, value(0), time(73) bit 7
+....interrupt 19, value(1), time(53) bit 7
+....interrupt 20, value(0), time(72) bit 8
+....interrupt 21, value(1), time(68) bit 8
+....interrupt 22, value(0), time(25) bit 9
+....interrupt 23, value(1), time(75) bit 9
+....interrupt 24, value(0), time(12) bit 10
+....interrupt 25, value(1), time(47) bit 10
+....interrupt 26, value(0), time(25) bit 11
+....interrupt 27, value(1), time(53) bit 11
+....interrupt 28, value(0), time(73) bit 12
+....interrupt 29, value(1), time(53) bit 12 
+....interrupt 30, value(0), time(73) bit 13 
+....interrupt 31, value(1), time(53) bit 13
+....interrupt 32, value(0), time(26) bit 14
+....interrupt 33, value(1), time(53) bit 14
+....interrupt 34, value(0), time(73) bit 15
+....interrupt 35, value(1), time(53) bit 15
+....interrupt 36, value(0), time(72) bit 16
+....interrupt 37, value(1), time(67) bit 16
+....interrupt 38, value(0), time(26) bit 17
+....interrupt 39, value(1), time(54) bit 17
+....interrupt 40, value(0), time(26) bit 18
+....interrupt 41, value(1), time(53) bit 18
+....interrupt 42, value(0), time(26) bit 19
+....interrupt 43, value(1), time(53) bit 19
+....interrupt 44, value(0), time(26) bit 20
+....interrupt 45, value(1), time(54) bit 20
+....interrupt 46, value(0), time(26) bit 21
+....interrupt 47, value(1), time(54) bit 21
+....interrupt 48, value(0), time(26) bit 22
+....interrupt 49, value(1), time(66) bit 22
+....interrupt 50, value(0), time(13) bit 23 
+....interrupt 51, value(1), time(53) bit 23
+....interrupt 52, value(0), time(25) bit 24
+....interrupt 53, value(1), time(67) bit 24
+....interrupt 54, value(0), time(73) bit 25
+....interrupt 55, value(1), time(53) bit 25
+....interrupt 56, value(0), time(73) bit 26
+....interrupt 57, value(1), time(53) bit 26
+....interrupt 58, value(0), time(73) bit 27
+....interrupt 59, value(1), time(53) bit 27
+....interrupt 60, value(0), time(73) bit 28
+....interrupt 61, value(1), time(53) bit 28
+....interrupt 62, value(0), time(73) bit 29
+....interrupt 63, value(1), time(53) bit 29
+....interrupt 64, value(0), time(26) bit 30
+....interrupt 65, value(1), time(53) bit 30
+....interrupt 66, value(0), time(73) bit 31
+....interrupt 67, value(1), time(54) bit 31
+....interrupt 68, value(0), time(72) bit 32
+....interrupt 69, value(1), time(64) bit 32 
+....interrupt 70, value(0), time(26) bit 33
+....interrupt 71, value(1), time(53) bit 33
+....interrupt 72, value(0), time(26) bit 34
+....interrupt 73, value(1), time(53) bit 34
+....interrupt 74, value(0), time(26) bit 35
+....interrupt 75, value(1), time(53) bit 35
+....interrupt 76, value(0), time(73) bit 36
+....interrupt 77, value(1), time(53) bit 36
+....interrupt 78, value(0), time(73) bit 37
+....interrupt 79, value(1), time(53) bit 37
+....interrupt 80, value(0), time(26) bit 38
+....interrupt 81, value(1), time(53) bit 38
+....interrupt 82, value(0), time(26) DHT22 pull low to send bit 39 (host to record bit 38 high time)
+....interrupt 83, value(1), time(53) DHT22 release to end   bit 39
+....interrupt 84, value(0), time(72) DHT22 pull low to signal end of data, host to record bit 39 high time
+humidity    = 79.5     host to calculate humidity/temperature/crc data
+temperature = 25.1
+crc = 0x0019 correct
+....interrupt 85, value(1), time(46)
