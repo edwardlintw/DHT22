@@ -1,6 +1,6 @@
-#include <linux/module.h>       /* Needed by all modules */
-#include <linux/kernel.h>       /* Needed for KERN_INFO */
-#include <linux/init.h>         /* Needed for the macros */
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/ktime.h>
@@ -19,10 +19,11 @@ static irqreturn_t dht22_irq_handler(int irq, void* data);
 static enum hrtimer_restart wait_func(struct hrtimer *hrtimer);
 static void trigger_dht22(void);
 
-static int irq_number;
-static struct hrtimer wait_timer;
+static int                  irq_number;
+static struct hrtimer       wait_timer;
 static struct timespec64    prev_time;
 
+/* task queue for calculating humidity/temperature/crc(parity check) */
 static DECLARE_WORK(process, process_results);
 
 static int __init dht22_init(void)
@@ -48,6 +49,7 @@ static int __init dht22_init(void)
     }
 
     gpio_export(GPIO, true);
+    gpio_direction_output(GPIO, HIGH);
 
     /*
      * setup interrupt handler
@@ -97,21 +99,17 @@ static void __exit dht22_exit(void)
 
 static void trigger_dht22(void)
 {
-    /* 
-     * keep at least bus high at least 100ms
-     */
-    gpio_direction_output(GPIO, HIGH);
-    mdelay(100);                        
-
     /*
      * pull down bus at least 1ms
+     * to signal DHT22 for preparing humidity/temperature data
      */
     gpio_direction_output(GPIO, LOW);
     udelay(1000);
 
     /*
-     * release bus (bus return to HIGH)
-     * wait for 20ns
+     * release bus (bus return to HIGH, due to pull-up resistor)
+     * switch GPIO to input mode to receive falling-edge interrupt
+     * let the interrupt handler to process the followings
      */
     gpio_direction_input(GPIO);
 }
@@ -121,40 +119,63 @@ static int irq_count = 0;
 
 static enum hrtimer_restart wait_func(struct hrtimer *hrtimer)
 {
+    /*
+     * reset statictics counter
+     */
     low_count = 0;
     irq_count = 0;
+
+    /*
+     * trigger DHT22, then wait for 10 more seconds to re-trigger again
+     */
+    getnstimeofday64(&prev_time);
     trigger_dht22();
     hrtimer_forward(hrtimer, ktime_get(), ktime_set(10,0)); 
     return  HRTIMER_RESTART;
 }
 
+/*
+ * to record signal HIGH time duration, for calculating bit 0/1
+ */
 static int irq_time[40] = { 0 };
 
 static void process_results(struct work_struct* work)
 {
     int data[5] = { 0 };
     int i;
-    int value;
     int humidity;
     int temp;
+    int byte;
 
     for (i = 0; i < 40; i++)
     {
-        value = irq_time[i] > 50; /* 22~30us is low, 68~75us is high */
-        data[i/8] <<= 1;
-        data[i/8] |=  value;
+        data[(byte = i/8)] <<= 1;
+        data[byte] |= (irq_time[i] > 50); /* 22~30us is low, 68~75us is high */
     }
 
     humidity = (data[0] << 8) + data[1];
     temp     = (data[2] << 8) + data[3];
+    /*
+     * be aware of temperature below 0°C 
+     */
+#if 1
+    temp     = (temp & 0x7FFF) * ((1 == (data[2] >> 7)) ? -1 : 1);
+#else
+    temp    *= -1;  /* for test purpose only */
+#endif
    
     pr_err("humidity    = %d.%d\n", humidity/10, humidity%10);
-    pr_err("temperature = %d.%d\n", temp/10, temp%10);
+    pr_err("temperature = %d.%d\n", temp/10, abs(temp)%10);
     
     if (data[4] == ((data[0]+data[1]+data[2]+data[3]) & 0x00FF))
         pr_err("crc = 0x%04x correct\n", data[4] );
     else
         pr_err("crc error\n");
+
+    /*
+     * pull high, and wait for next trigger
+     */
+    gpio_direction_output(GPIO, HIGH);
 }
 
 static irqreturn_t dht22_irq_handler(int irq, void* data)
@@ -164,15 +185,33 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
     static const int            f_pos = 43;     /* begin finish low */
     struct timespec64           now;
     struct timespec64           diff;
+#if 0
+    int                         time_interval;
+#endif
 
     getnstimeofday64(&now);
     diff = timespec64_sub(now, prev_time);
+#if 0
+    time_interval = (int)(diff.tv_nsec / NSEC_PER_USEC);
+    pr_err("....interrupt %d, value(%d), time(%d)\n", irq_count++, val, 
+            time_interval);
+#endif
 
     if (0 == val)
     {
         if (low_count >= h_pos && low_count < f_pos)
         {
+            /* 
+             * to minimize IRQ CPU time,
+             * only to record signal HIGH time duration;
+             * calcalute bit 0/1 later via work queue
+             * 22~30us is low (bit is 0), 68~75us is high (bit is 1)
+             */
+#if 1
             irq_time[low_count-h_pos] = (int)(diff.tv_nsec / NSEC_PER_USEC);
+#else
+            irq_time[low_count-h_pos] = time_interval;
+#endif
             if (low_count == f_pos-1)
                 queue_work(system_highpri_wq, &process);
         }
@@ -188,6 +227,6 @@ module_exit(dht22_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Edward Lin");
-MODULE_DESCRIPTION("A test module for the IRQ Handler.");
+MODULE_DESCRIPTION("A simple module for DHT22 humidity/temperature sensor");
 MODULE_VERSION("0.1");
 
