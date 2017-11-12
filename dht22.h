@@ -1,5 +1,5 @@
-#ifndef _DHT22_EXP_H
-#define _DHT22_EXP_H
+#ifndef _DHT22_H
+#define _DHT22_H
 
 #define DEFAULT_GPIO            4
 #define DEFAULT_AUTOUPDATE_SEC  10          /* re-trigger DHT22 after 10 sec */
@@ -9,7 +9,7 @@
 /*
  * proprietary to dht22_exp.c, not seen by others
  */
-#ifdef _INCLUDE_DHT22_EXP_DECL
+#ifdef _INCLUDE_DHT22_DECL
 
 static void process_results(struct work_struct* work);
 static irqreturn_t dht22_irq_handler(int irq, void* data); 

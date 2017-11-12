@@ -8,8 +8,8 @@
 #include <linux/hrtimer.h>
 #include <linux/delay.h>
 #include <linux/kobject.h>
-#define _INCLUDE_DHT22_EXP_DECL
-#include "dht22_exp.h"
+#define _INCLUDE_DHT22_DECL
+#include "dht22.h"
 
 static const int    high = 1;
 static const int    low  = 0;
