@@ -39,7 +39,6 @@ static ATTR_RW(autoupdate_sec);
 static ATTR_RO(humidity);
 static ATTR_RO(temperature);
 static ATTR_WO(trigger);
-static ATTR_RO(flag_info);
 
 static struct attribute* dht22_attrs[] = {
     &gpio_attr.attr,
@@ -48,7 +47,6 @@ static struct attribute* dht22_attrs[] = {
     &humidity_attr.attr,
     &temperature_attr.attr,
     &trigger_attr.attr,
-    &flag_info_attr.attr,
     NULL
 };
 
@@ -63,7 +61,7 @@ static int                  irq_number;
 static struct hrtimer       autoupdate_timer;
 static struct hrtimer       timeout_timer;
 static struct timespec64    prev_time;
-static const int            timeout_time = 1;  /* timeout(sec) after trigger */
+static const int            timeout_time = 1;  /* 1 second */
 static int                  low_irq_count = 0;
 static int                  humidity = 0;      /* cache last humidity */
 static int                  temperature = 0;   /* cache last temperature */
@@ -262,23 +260,21 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
          */
         pr_info("....timeout, failed to fetch DHT22 data\n");
         dht22_state   = dht22_idle;
-        low_irq_count = 0;
-        gpio_direction_output(gpio, high);
     }
     return HRTIMER_NORESTART;
 }
 
 static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer)
 {
-    to_trigger_dht22();
-
     if (autoupdate)
-    {
-        hrtimer_forward(hrtimer, ktime_get(), ktime_set(autoupdate_sec, 0));
-        return HRTIMER_RESTART;
-    }
-    else
-        return HRTIMER_NORESTART;
+        to_trigger_dht22();
+
+    /*
+     * let the timerr continue flying
+     * only trigger DHT22 when 'autoupdate' is enabled
+     */ 
+    hrtimer_forward(hrtimer, ktime_get(), ktime_set(autoupdate_sec, 0));
+    return HRTIMER_RESTART;
 }
 
 static void process_results(struct work_struct* work)
@@ -425,19 +421,12 @@ static DECL_ATTR_STORE(autoupdate)
     sscanf(buf, "%d\n", &tmp);
     new_auto = 0 != tmp;
 
+    /*
+     * the autoupdate timer is still flying
+     * just update 'autoupdate' flag
+     */
     if (new_auto != autoupdate)
-    {
         autoupdate = new_auto;
-        if (autoupdate                 && 
-            dht22_idle == dht22_state  &&
-            0          == hrtimer_callback_running(&autoupdate_timer))
-        {
-            gpio_direction_output(gpio, high);
-            hrtimer_start(&autoupdate_timer, 
-                          ktime_set(autoupdate_sec,0), 
-                          HRTIMER_MODE_REL);
-        }
-    }
 
     return count;
 }
@@ -489,23 +478,6 @@ static DECL_ATTR_STORE(trigger)
     to_trigger_dht22();
     return count;
 }
-
-static DECL_ATTR_SHOW(flag_info)
-{
-    return sprintf(buf, "autoupdate = %d\n"
-                        "autoupdate_sec = %d\n"
-                        "autoupdate_func running = %d\n"
-                        "timeout_func running = %d\n"
-                        "state (idle,working) = %d\n"
-                        "low_irq_count = %d\n",
-                        autoupdate,
-                        autoupdate_sec,
-                        hrtimer_callback_running(&autoupdate_timer),
-                        hrtimer_callback_running(&timeout_timer),
-                        dht22_state,
-                        low_irq_count);
-}
-
 
 module_init(dht22_init);
 module_exit(dht22_exit);

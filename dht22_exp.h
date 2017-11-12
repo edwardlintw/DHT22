@@ -2,9 +2,9 @@
 #define _DHT22_EXP_H
 
 #define DEFAULT_GPIO            4
-#define DEFAULT_AUTOUPDATE_SEC  10    /* re-trigger DHT22 after 10 sec */
-#define AUTOUPDATE_SEC_MIN      3     /* 3 seconds */
-#define AUTOUPDATE_SEC_MAX      60000 /* 10 min */
+#define DEFAULT_AUTOUPDATE_SEC  10          /* re-trigger DHT22 after 10 sec */
+#define AUTOUPDATE_SEC_MIN      3           /* 3 seconds */
+#define AUTOUPDATE_SEC_MAX      60000       /* 10 min */
 
 /*
  * proprietary to dht22_exp.c, not seen by others
@@ -39,7 +39,6 @@ static DECL_ATTR_STORE(autoupdate_sec);
 static DECL_ATTR_SHOW (humidity);
 static DECL_ATTR_SHOW (temperature);
 static DECL_ATTR_STORE(trigger);
-static DECL_ATTR_SHOW (flag_info);
 
 #endif /* _INCLUDE_DHT22_EXP_DECL */
 
