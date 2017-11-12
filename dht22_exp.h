@@ -7,7 +7,7 @@
 #define AUTOUPDATE_SEC_MAX      60000 /* 10 min */
 
 /*
- * proprietary to dht22.c, not seen by others
+ * proprietary to dht22_exp.c, not seen by others
  */
 #ifdef _INCLUDE_DHT22_EXP_DECL
 
@@ -18,11 +18,15 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer);
 static void to_trigger_dht22(void);
 static void trigger_dht22(void);
 
-#define DECL_ATTR_SHOW(F)  ssize_t F ## _show (struct kobject* kobj,\
+#define ATTR_RW(v) struct kobj_attribute v ## _attr = __ATTR_RW(v)
+#define ATTR_RO(v) struct kobj_attribute v ## _attr = __ATTR_RO(v)
+#define ATTR_WO(v) struct kobj_attribute v ## _attr = __ATTR_WO(v)
+
+#define DECL_ATTR_SHOW(f)  ssize_t f ## _show (struct kobject* kobj,\
                                                struct kobj_attribute* attr,\
                                                char* buf)
 
-#define DECL_ATTR_STORE(F) ssize_t F ## _store(struct kobject* kobj,\
+#define DECL_ATTR_STORE(f) ssize_t f ## _store(struct kobject* kobj,\
                                                struct kobj_attribute* attr,\
                                                const char* buf,\
                                                size_t count)
@@ -35,6 +39,7 @@ static DECL_ATTR_STORE(autoupdate_sec);
 static DECL_ATTR_SHOW (humidity);
 static DECL_ATTR_SHOW (temperature);
 static DECL_ATTR_STORE(trigger);
+static DECL_ATTR_SHOW (flag_info);
 
 #endif /* _INCLUDE_DHT22_EXP_DECL */
 

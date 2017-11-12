@@ -33,12 +33,13 @@ MODULE_PARM_DESC(autoupdate_sec,
 /*
  * module's attributes
  */
-static struct kobj_attribute gpio_attr           = __ATTR_RO(gpio);
-static struct kobj_attribute autoupdate_attr     = __ATTR_RW(autoupdate);
-static struct kobj_attribute autoupdate_sec_attr = __ATTR_RW(autoupdate_sec);
-static struct kobj_attribute humidity_attr       = __ATTR_RO(humidity);
-static struct kobj_attribute temperature_attr    = __ATTR_RO(temperature);
-static struct kobj_attribute trigger_attr        = __ATTR_WO(trigger);
+static ATTR_RO(gpio);
+static ATTR_RW(autoupdate);
+static ATTR_RW(autoupdate_sec);
+static ATTR_RO(humidity);
+static ATTR_RO(temperature);
+static ATTR_WO(trigger);
+static ATTR_RO(flag_info);
 
 static struct attribute* dht22_attrs[] = {
     &gpio_attr.attr,
@@ -47,6 +48,7 @@ static struct attribute* dht22_attrs[] = {
     &humidity_attr.attr,
     &temperature_attr.attr,
     &trigger_attr.attr,
+    &flag_info_attr.attr,
     NULL
 };
 
@@ -71,9 +73,10 @@ static int                  irq_count = 0;     /* for test purpose only */
 #endif
 
 /*
- * to record signal HIGH time duration, for calculating bit 0/1
+ * int[40] to record signal HIGH time duration, for calculating bit 0/1
+ * 22~30us HIGH is 0, 68~75us HIGH is 1
  * DHT22 send out 2-byte humidity, 2-byte temperature and 1-byte parity(CRC)
- * total 40 bits
+ * int[40] to record time duration is required
  */
 static int                  irq_time[40] = { 0 };
 static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
@@ -82,7 +85,7 @@ static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
  * queue work to calculate humidity/temperature/crc(parity check) 
  * make IRQ handler to return as soon as possible
  */
-static DECLARE_WORK(process, process_results);
+static DECLARE_WORK(process_work, process_results);
 
 static int __init dht22_init(void)
 {
@@ -185,7 +188,7 @@ static void __exit dht22_exit(void)
     gpio_free(gpio);
     hrtimer_cancel(&autoupdate_timer);
     hrtimer_cancel(&timeout_timer);
-    cancel_work_sync(&process);
+    cancel_work_sync(&process_work);
     kobject_put(dht22_kobj);
     pr_err("dht22_exp unloaded.\n");
 }
@@ -255,10 +258,12 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
         /*
          * host didn't receive 86 interrupts
          * no results were produced
-         * reset state to 'dht22_idle' and wait for next trigger
+         * reset state to 'dht22_idle' and wait for next trigger (if autoupdate)
          */
         pr_info("....timeout, failed to fetch DHT22 data\n");
-        dht22_state = dht22_idle;
+        dht22_state   = dht22_idle;
+        low_irq_count = 0;
+        gpio_direction_output(gpio, high);
     }
     return HRTIMER_NORESTART;
 }
@@ -287,8 +292,8 @@ static void process_results(struct work_struct* work)
     /* 
      * determine bit value 0 or 1
      * 22-30us is 0, 68~75us is 1
-     * since DHT22 may be not as precise as spec, threshoud 50us is used for
-     * decision making
+     * since DHT22's condition may be not as precise as spec, 
+     * threshoud 50us is used for decision making
      */
     for (i = 0; i < 40; i++)
     {
@@ -297,7 +302,7 @@ static void process_results(struct work_struct* work)
     }
 
     pr_info("DHT22 raw data 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X\n",
-            data[0], data[1], data[2], data[3], data[4] );
+            data[0], data[1], data[2], data[3], data[4]);
 
     raw_humidity = (data[0] << 8) | data[1];
     raw_temp     = (data[2] << 8) | data[3];
@@ -305,9 +310,10 @@ static void process_results(struct work_struct* work)
      * be aware of temperature below 0°C 
      */
 #if 1
-    raw_temp = (raw_temp & 0x7FFF) * ((1 == (data[2] >> 7)) ? -1 : 1);
+    if (1 == data[2] >> 7)
+        raw_temp = (raw_temp & 0x7FFF) * -1;
 #else
-    temp *= -1;  /* for test purpose only */
+    raw_temp *= -1;  /* for test purpose only */
 #endif
    
     pr_info("humidity    = %d.%d\n", raw_humidity/10, raw_humidity%10);
@@ -323,7 +329,6 @@ static void process_results(struct work_struct* work)
         pr_info("crc error\n");
 
     dht22_state = dht22_idle;
-
     /*
      * pull high, and wait for next trigger
      */
@@ -371,7 +376,7 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
              * calculating 40 bits' value (0 or 1) via queue work
              */
             if (low_irq_count == f_pos-1)
-                queue_work(system_highpri_wq, &process);
+                queue_work(system_highpri_wq, &process_work);
         }
         ++low_irq_count;
     }
@@ -423,8 +428,11 @@ static DECL_ATTR_STORE(autoupdate)
     if (new_auto != autoupdate)
     {
         autoupdate = new_auto;
-        if (autoupdate && dht22_idle == dht22_state)
+        if (autoupdate                 && 
+            dht22_idle == dht22_state  &&
+            0          == hrtimer_callback_running(&autoupdate_timer))
         {
+            gpio_direction_output(gpio, high);
             hrtimer_start(&autoupdate_timer, 
                           ktime_set(autoupdate_sec,0), 
                           HRTIMER_MODE_REL);
@@ -480,6 +488,22 @@ static DECL_ATTR_STORE(trigger)
 {
     to_trigger_dht22();
     return count;
+}
+
+static DECL_ATTR_SHOW(flag_info)
+{
+    return sprintf(buf, "autoupdate = %d\n"
+                        "autoupdate_sec = %d\n"
+                        "autoupdate_func running = %d\n"
+                        "timeout_func running = %d\n"
+                        "state (idle,working) = %d\n"
+                        "low_irq_count = %d\n",
+                        autoupdate,
+                        autoupdate_sec,
+                        hrtimer_callback_running(&autoupdate_timer),
+                        hrtimer_callback_running(&timeout_timer),
+                        dht22_state,
+                        low_irq_count);
 }
 
 
