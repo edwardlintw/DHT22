@@ -28,7 +28,7 @@ MODULE_PARM_DESC(autoupdate, "automatically trigger or not, default is true");
 static int autoupdate_sec = DEFAULT_AUTOUPDATE_SEC;
 module_param(autoupdate_sec, int, S_IRUGO);
 MODULE_PARM_DESC(autoupdate_sec, 
-                 "Seconds between two trigger events, default is '10' second");
+                 "Seconds between two trigger events, default is '10' seconds");
 
 /*
  * module's attributes
@@ -39,6 +39,7 @@ static ATTR_RW(autoupdate_sec);
 static ATTR_RO(humidity);
 static ATTR_RO(temperature);
 static ATTR_WO(trigger);
+static ATTR_WO(debug);
 
 static struct attribute* dht22_attrs[] = {
     &gpio_attr.attr,
@@ -47,6 +48,7 @@ static struct attribute* dht22_attrs[] = {
     &humidity_attr.attr,
     &temperature_attr.attr,
     &trigger_attr.attr,
+    &debug_attr.attr,
     NULL
 };
 
@@ -66,6 +68,13 @@ static int                  low_irq_count = 0;
 static int                  humidity = 0;      /* cache last humidity */
 static int                  temperature = 0;   /* cache last temperature */
 static struct kobject*      dht22_kobj;
+static bool                 dbg_flag = false;  /* log more info if true */
+/*
+ * the following will be printed if dbg_flag is true
+ */
+static int                  dbg_fail_read  = 0;
+static int                  dbg_total_read = 0;
+static int                  dbg_irq_count  = 0;
 #if 0
 static int                  irq_count = 0;     /* for test purpose only */
 #endif
@@ -74,7 +83,6 @@ static int                  irq_count = 0;     /* for test purpose only */
  * int[40] to record signal HIGH time duration, for calculating bit 0/1
  * 22~30us HIGH is 0, 68~75us HIGH is 1
  * DHT22 send out 2-byte humidity, 2-byte temperature and 1-byte parity(CRC)
- * int[40] to record time duration is required
  */
 static int                  irq_time[40] = { 0 };
 static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
@@ -157,15 +165,13 @@ static int __init dht22_init(void)
      * no matter autoupdate is on or off
      * at least DHT22 will be triggered once
      */
-    hrtimer_init(&autoupdate_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    autoupdate_timer.function = autoupdate_func;
-    hrtimer_start(&autoupdate_timer, ktime_set(2,0), HRTIMER_MODE_REL);
+    init_dht22_timer(&autoupdate_timer, autoupdate_func, true, 2);
     /*
      * setup timeout timer, but not start yet
      * it'll start when triggering DHT22 to request data
      */
-    hrtimer_init(&timeout_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    timeout_timer.function = timeout_func;
+    init_dht22_timer(&timeout_timer, timeout_func, false, 0);
+
     pr_err("dht22_exp loaded.\n");
 
     return 0;
@@ -191,6 +197,17 @@ static void __exit dht22_exit(void)
     pr_err("dht22_exp unloaded.\n");
 }
 
+static void init_dht22_timer(struct hrtimer* timer, 
+                             enum hrtimer_restart (*func)(struct hrtimer*),
+                             bool start_now,
+                             int  wait_sec)
+{
+    hrtimer_init(timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    timer->function = func;
+    if (start_now)
+        hrtimer_start(timer, ktime_set(wait_sec,0), HRTIMER_MODE_REL);
+}
+
 static void to_trigger_dht22(void)
 {
     /*
@@ -205,6 +222,7 @@ static void to_trigger_dht22(void)
      * reset statictics counter and set state as 'dht22_working'
      */
     low_irq_count = 0;
+    dbg_irq_count = 0;
     dht22_state   = dht22_working;
 #if 0
     irq_count     = 0;
@@ -212,7 +230,7 @@ static void to_trigger_dht22(void)
 
     /*
      * start timeout_timer
-     * if the host can't receive 86 interrupts, the timeout_func() will
+     * if the host receive fiewer than 86 interrupts, the timeout_func() will
      * reset state to 'dht22_idle'
      */
     hrtimer_start(&timeout_timer, ktime_set(timeout_time, 0), HRTIMER_MODE_REL);
@@ -249,17 +267,23 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
          * state is set to 'dht22_idle' by 'void process_results()'
          * even CRC error (no results were produced)
          */
-        pr_info("....timeout, fetch DHT22 data successfully\n");
     }
     else
     {
         /*
-         * host didn't receive 86 interrupts
+         * host receive fewer yhan 86 interrupts
          * no results were produced
          * reset state to 'dht22_idle' and wait for next trigger (if autoupdate)
          */
-        pr_info("....timeout, failed to fetch DHT22 data\n");
+        pr_info("Failed to fetch DHT22 data\n");
+        ++dbg_fail_read;
         dht22_state   = dht22_idle;
+    }
+    ++dbg_total_read;
+    if (dbg_flag)
+    {
+        pr_info("total read %d, fail %d\n", dbg_total_read, dbg_fail_read);
+        pr_info("last IRQ count (should be 86) %d\n", dbg_irq_count);
     }
     return HRTIMER_NORESTART;
 }
@@ -319,7 +343,7 @@ static void process_results(struct work_struct* work)
     {
         humidity    = raw_humidity;
         temperature = raw_temp;
-        pr_info("crc = 0x%04X correct\n", data[4] );
+        pr_info("correct crc\n");
     }
     else
         pr_info("crc error\n");
@@ -376,6 +400,7 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
         }
         ++low_irq_count;
     }
+    ++dbg_irq_count;
     prev_time = now;
 
     return IRQ_HANDLED;
@@ -476,6 +501,19 @@ static DECL_ATTR_SHOW (temperature)
 static DECL_ATTR_STORE(trigger)
 {
     to_trigger_dht22();
+    return count;
+}
+
+/*
+ * echo 1 > debug
+ */
+static DECL_ATTR_STORE(debug)
+{
+    int tmp;
+
+    sscanf(buf, "%d\n", &tmp);
+    dbg_flag = 0 != tmp;
+
     return count;
 }
 

@@ -17,6 +17,10 @@ static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer);
 static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer);
 static void to_trigger_dht22(void);
 static void trigger_dht22(void);
+static void init_dht22_timer(struct hrtimer*, 
+                             enum hrtimer_restart (*)(struct hrtimer*),
+                             bool,
+                             int);
 
 #define ATTR_RW(v) struct kobj_attribute v ## _attr = __ATTR_RW(v)
 #define ATTR_RO(v) struct kobj_attribute v ## _attr = __ATTR_RO(v)
@@ -39,8 +43,9 @@ static DECL_ATTR_STORE(autoupdate_sec);
 static DECL_ATTR_SHOW (humidity);
 static DECL_ATTR_SHOW (temperature);
 static DECL_ATTR_STORE(trigger);
+static DECL_ATTR_STORE(debug);
 
-#endif /* _INCLUDE_DHT22_EXP_DECL */
+#endif /* _INCLUDE_DHT22_DECL */
 
-#endif /*_DHT22_EXP_H */
+#endif /*_DHT22_H */
 
