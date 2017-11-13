@@ -15,7 +15,7 @@ static const int    high = 1;
 static const int    low  = 0;
 
 /*
- * module parameters
+ * module parameters, please refer to README.md
  */
 static int gpio = DEFAULT_GPIO;
 module_param(gpio, int, S_IRUGO);
@@ -23,16 +23,18 @@ MODULE_PARM_DESC(gpio, "Assigned GPIO number of DHT22 data pin, default is 4");
 
 static bool autoupdate = true;
 module_param(autoupdate, bool, S_IRUGO);
-MODULE_PARM_DESC(autoupdate, "automatically trigger or not, default is 1(int);"
+MODULE_PARM_DESC(autoupdate, "automatically trigger or not, default is 1(int); "
                              "0 is off, others are all on");
 
 static int autoupdate_sec = DEFAULT_AUTOUPDATE_SEC;
 module_param(autoupdate_sec, int, S_IRUGO);
 MODULE_PARM_DESC(autoupdate_sec, 
-                 "Seconds between two trigger events, default is 10 seconds");
+                 "Seconds between two trigger events (if autoupdate is on), "
+                 "default is 10 seconds; "
+                 "the value must be >= 3(sec) and <= 60000(10min)");
 
 /*
- * module's attributes
+ * module's attributes; please refer to README.md
  */
 static ATTR_RO(gpio);
 static ATTR_RW(autoupdate);
@@ -76,9 +78,6 @@ static bool                 dbg_flag = false;  /* log more info if true */
 static int                  dbg_fail_read  = 0;
 static int                  dbg_total_read = 0;
 static int                  dbg_irq_count  = 0;
-#if 0
-static int                  irq_count = 0;     /* for test purpose only */
-#endif
 
 /*
  * int[40] to record signal HIGH time duration, for calculating bit 0/1
@@ -98,47 +97,41 @@ static int __init dht22_init(void)
 {
     int     ret;
 
-    pr_err("Loading dht22_exp module...\n");
+    pr_err("Loading dht22 module...\n");
 
-    /*
-     * setup GPIO
-     */
+    /* setup GPIO */
     if (!gpio_is_valid(gpio)) {
-        pr_err("dht22_exp can't validate GPIO %d; unloaded\n", gpio);
+        pr_err("dht22 can't validate GPIO %d; unloaded\n", gpio);
         return -EINVAL;
     }
     ret = gpio_request(gpio, "sysfs");
     if (ret < 0) {
-        pr_err("dht22_exp failed to request GPIO %d, unloaded\n",gpio);
+        pr_err("dht22 failed to request GPIO %d, unloaded\n",gpio);
         return ret;
     }
 
     gpio_export(gpio, true);
     gpio_direction_output(gpio, high);
 
-    /*
-     * setup interrupt handler
-     */
+    /* setup interrupt handler */
     irq_number = gpio_to_irq(gpio);
     if (irq_number < 0) {
-        pr_err("dht22_exp failed to get IRQ for GPIO %d, unloaded\n", gpio);
+        pr_err("dht22 failed to get IRQ for GPIO %d, unloaded\n", gpio);
         ret = irq_number;
         goto free_gpio;
     }
-    pr_err("dht22_exp assign IRQ %d to GPIO %d.\n", irq_number, gpio);
+    pr_err("dht22 assign IRQ %d to GPIO %d.\n", irq_number, gpio);
     ret = request_irq(irq_number,
             dht22_irq_handler,
             IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
             "dht22_irq_handler",
             NULL);
     if (ret < 0) {
-        pr_err("idht22_exp failed to request IRQ, unloaded.\n");
+        pr_err("idht22 failed to request IRQ, unloaded.\n");
         goto free_gpio;
     }
 
-    /*
-     * kobject
-     */
+    /* kobject */
     dht22_kobj = kobject_create_and_add("dht22", kernel_kobj);
     if (NULL == dht22_kobj) {
         pr_err("DHT22 failed to create kobject mapping\n");
@@ -146,9 +139,7 @@ static int __init dht22_init(void)
         goto free_gpio;
     }
 
-    /*
-     * sysfs attribute
-     */
+    /* sysfs attribute */
     ret = sysfs_create_group(dht22_kobj, &attr_group);
     if (ret) {
         pr_err("DHT22 failed to create sysfs group.\n");
@@ -167,7 +158,7 @@ static int __init dht22_init(void)
      */
     init_dht22_timer(&timeout_timer, timeout_func, false, 0);
 
-    pr_err("dht22_exp loaded.\n");
+    pr_err("dht22 loaded.\n");
 
     return 0;
 
@@ -189,7 +180,7 @@ static void __exit dht22_exit(void)
     hrtimer_cancel(&timeout_timer);
     cancel_work_sync(&process_work);
     kobject_put(dht22_kobj);
-    pr_err("dht22_exp unloaded.\n");
+    pr_err("dht22 unloaded.\n");
 }
 
 static void init_dht22_timer(struct hrtimer* timer, 
@@ -205,22 +196,15 @@ static void init_dht22_timer(struct hrtimer* timer,
 
 static void to_trigger_dht22(void)
 {
-    /*
-     * DHT22 working in progress, ignore this event
-     */
+    /* DHT22 working in progress, ignore this event */
     if (dht22_working == dht22_state) {
         pr_info("DHT22 is busy, ignore trigger event.....\n");
         return;
     }
-    /*
-     * reset statictics counter and set state as 'dht22_working'
-     */
+    /* reset statictics counter and set state as 'dht22_working' */
     low_irq_count = 0;
     dbg_irq_count = 0;
     dht22_state   = dht22_working;
-#if 0
-    irq_count     = 0;
-#endif
 
     /*
      * start timeout_timer
@@ -306,15 +290,10 @@ static void process_results(struct work_struct* work)
 
     raw_humidity = (data[0] << 8) | data[1];
     raw_temp     = (data[2] << 8) | data[3];
-    /*
-     * be aware of temperature below 0°C 
-     */
-#if 1
+
+    /* be aware of temperature below 0°C */
     if (1 == data[2] >> 7)
         raw_temp = (raw_temp & 0x7FFF) * -1;
-#else
-    raw_temp *= -1;  /* for test purpose only */
-#endif
    
     pr_info("humidity    = %d.%d\n", raw_humidity/10, raw_humidity%10);
     pr_info("temperature = %d.%d\n", raw_temp/10, abs(raw_temp)%10);
@@ -336,9 +315,8 @@ static void process_results(struct work_struct* work)
         ;
 
     dht22_state = dht22_idle;
-    /*
-     * pull high, and wait for next trigger
-     */
+
+    /* pull high, and wait for next trigger */
     gpio_direction_output(gpio, high);
 }
 
@@ -349,17 +327,9 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
     static const int  f_pos = 42;     /* DHT22 final (last) low */
     struct timespec64 now;
     struct timespec64 diff;
-#if 0
-    int               time_interval;
-#endif
 
     getnstimeofday64(&now);
     diff = timespec64_sub(now, prev_high_low_time);
-#if 0
-    time_interval = (int)(diff.tv_nsec / NSEC_PER_USEC);
-    pr_info("....interrupt %d, value(%d), time(%d)\n", irq_count++, val, 
-             time_interval);
-#endif
 
     /* 
      * capture falling-edge interrupt and calculating
@@ -393,7 +363,7 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
 
 /*
  * sysfs attributes
- * the followings two declared in dht22_exp.h
+ * the followings two declared in dht22.h
  *
 #define DECL_ATTR_SHOW(F)  ssize_t F ## _show (struct kobject* kobj,\
                                                struct kobj_attribute* attr,\
@@ -404,25 +374,19 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
                                                size_t count)
 */
 
-/*
- * cat gpio
- */
+/* cat gpio */
 static DECL_ATTR_SHOW (gpio)
 {
     return sprintf(buf, "%d\n", gpio);
 }
 
-/* 
- * cat autoupdate
- */
+/* cat autoupdate */
 static DECL_ATTR_SHOW (autoupdate)
 {
     return sprintf(buf, "%d\n", autoupdate);
 }
 
-/*
- * echo 1 > autoupdate
- */
+/* echo 1 > autoupdate */
 static DECL_ATTR_STORE(autoupdate)
 {
     int tmp;
@@ -444,17 +408,13 @@ static DECL_ATTR_STORE(autoupdate)
     return count;
 }
 
-/*
- * cat autoupdate_sec
- */
+/* cat autoupdate_sec */
 static DECL_ATTR_SHOW (autoupdate_sec)
 {
     return sprintf(buf, "%d\n", autoupdate_sec);
 }
 
-/*
- * echo 10 > autoupdate_sec
- */
+/* echo 10 > autoupdate_sec */
 static DECL_ATTR_STORE(autoupdate_sec)
 {
     int tmp;
@@ -470,25 +430,19 @@ static DECL_ATTR_STORE(autoupdate_sec)
     return count;
 }
 
-/*
- * cat humidity
- */
+/* cat humidity */
 static DECL_ATTR_SHOW (humidity)
 {
     return sprintf(buf, "%d.%d%%\n", humidity/10, humidity%10);
 }
 
-/*
- * cat temperature
- */
+/* cat temperature */
 static DECL_ATTR_SHOW (temperature)
 {
     return sprintf(buf, "%d.%d°C\n", temperature/10, abs(temperature)%10);
 }
 
-/*
- * echo 1 > trigger
- */
+/* echo 1 > trigger */
 static DECL_ATTR_STORE(trigger)
 {
     to_trigger_dht22();
@@ -497,9 +451,7 @@ static DECL_ATTR_STORE(trigger)
     return count;
 }
 
-/*
- * echo 1 > debug
- */
+/* echo 1 > debug */
 static DECL_ATTR_STORE(debug)
 {
     int tmp;
@@ -515,6 +467,6 @@ module_exit(dht22_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Edward Lin");
-MODULE_DESCRIPTION("A simple module for DHT22 humidity/temperature sensor");
-MODULE_VERSION("0.1");
+MODULE_DESCRIPTION("A simplified driver for DHT22 humidity/temperature sensor");
+MODULE_VERSION("0.9");
 
