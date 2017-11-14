@@ -1,3 +1,18 @@
+/*
+ * DHT22 Humidity And Temperature Sensor Driver
+ * 
+ * Copyright (c) Edward Lin <edwardlin.tw@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ */
 #ifndef _DHT22_H
 #define _DHT22_H
 
@@ -7,7 +22,7 @@
 #define AUTOUPDATE_SEC_MAX      60000       /* 10 min */
 
 /*
- * proprietary to dht22_exp.c, not seen by others
+ * proprietary to dht22.c, not seen by others
  */
 #ifdef _INCLUDE_DHT22_DECL
 
