@@ -28,12 +28,6 @@
  */
 #ifdef _INCLUDE_DHT22_DECL
 
-struct dht22_data {
-    char        buf[IO_BUF_MAX];    
-    rwlock_t    lock;
-};
-
-
 static void process_results(struct work_struct* work);
 static irqreturn_t dht22_irq_handler(int irq, void* data); 
 static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer);

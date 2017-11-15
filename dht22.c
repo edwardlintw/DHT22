@@ -87,7 +87,6 @@ static struct attribute_group attr_group = {
 static int device_major = 0;
 static int num_devs = 1;
 static struct cdev            dht22_cdev;
-static struct dht22_data*     dht22_data;
 static struct file_operations dht22_fops = {
     .open       = dev_open,
     .release    = dev_close,
@@ -270,53 +269,38 @@ static int      dev_open(struct inode* inode, struct file* file)
                                                       iminor(inode),
                                                       current->pid);
 
-    dht22_data = kmalloc(sizeof(struct dht22_data), GFP_KERNEL);
-    if (NULL == dht22_data) {
-        pr_err("dht22:%s not enough memory\n", __func__);
-        return -ENOMEM;
-    }
 
     /*
      * humidity  545 => 54.5% = 0.545 = 545 / 1000 => "%d.%d"(h/1000,h%1000)
      * tempeture 236 => 23.6  = 236/ 10 => "%d.%d"(t/10,t%10)
      */
-    sprintf( dht22_data->buf, "%d.%d:%d.%d\n", 
-             humidity/1000, humidity%1000,
-             temperature/10, abs(temperature)%10);
-    rwlock_init(&dht22_data->lock);
-    file->private_data = dht22_data;
+    file->private_data = NULL;
 
     return 0;
 }
 
 static int      dev_close(struct inode* inode, struct file* file)
 {
-    if (file->private_data) {
-        kfree(file->private_data);
-        file->private_data = NULL;
-    }
-
     return 0;
 }
 
 static ssize_t  dev_read(struct file* file, char __user* buf, 
                          size_t count, loff_t* f_pos)
 {
-    struct dht22_data*    p =  file->private_data;
     char                  tmp[IO_BUF_MAX];
-    unsigned int          len;
+    size_t                len;
     int                   retval = 0;
 
     if (*f_pos > 0)
         return 0;
 
-    read_lock(&p->lock);
     sprintf( tmp, "%d.%d:%d.%d\n", 
              humidity/1000, humidity%1000,
              temperature/10, abs(temperature)%10);
-    read_unlock(&p->lock);
 
     len = strlen(tmp);
+    len = min(len, count-1);
+    tmp[len] = '\0';
     if (copy_to_user(buf, tmp, len))
         retval = -EFAULT;
     else {
@@ -454,14 +438,6 @@ static void process_results(struct work_struct* work)
         temperature = raw_temp;
         if (dbg_flag)
             pr_info("CRC: OK\n");
-        /* copy to device data */
-        /*
-        write_lock(&dht22_data->lock);
-        sprintf(dht22_data->buf, "%d.%d:%d.%d\n", 
-                humidity/1000, humidity%1000,
-                temperature/10, abs(temperature)%10);
-        write_unlock(&dht22_data->lock);
-        */
     }
     else if (dbg_flag)
         pr_info("CRC: Error\n");
