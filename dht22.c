@@ -224,7 +224,7 @@ static void __exit dht22_exit(void)
     pr_err("dht22 unloaded.\n");
 }
 
-static int      init_dht22_dev(void)
+static int init_dht22_dev(void)
 {
     dev_t   dev = MKDEV(device_major, 0);
     int     alloc_ret = 0;
@@ -254,7 +254,7 @@ error:
     return -1;    
 }
 
-static void     exit_dht22_dev(void)
+static void exit_dht22_dev(void)
 {
     dev_t   dev = MKDEV(device_major, 0);
 
@@ -262,30 +262,29 @@ static void     exit_dht22_dev(void)
     unregister_chrdev_region(dev, num_devs);
 }
 
-static int      dev_open(struct inode* inode, struct file* file)
+static int dev_open(struct inode* inode, struct file* file)
 {
-    pr_info("dht22:%s major %d, minor %d (pid %d)\n", __func__,
-                                                      imajor(inode),
-                                                      iminor(inode),
-                                                      current->pid);
+    if (dbg_flag) {
+        pr_info("dht22:%s major %d, minor %d (pid %d)\n", __func__,
+                                                         imajor(inode),
+                                                         iminor(inode),
+                                                         current->pid);
+    }
 
-
-    /*
-     * humidity  545 => 54.5% = 0.545 = 545 / 1000 => "%d.%d"(h/1000,h%1000)
-     * tempeture 236 => 23.6  = 236/ 10 => "%d.%d"(t/10,t%10)
-     */
     file->private_data = NULL;
 
     return 0;
 }
 
-static int      dev_close(struct inode* inode, struct file* file)
+static int dev_close(struct inode* inode, struct file* file)
 {
+    if (dbg_flag)
+        pr_info("dht22:%s\n", __func__);
     return 0;
 }
 
-static ssize_t  dev_read(struct file* file, char __user* buf, 
-                         size_t count, loff_t* f_pos)
+static ssize_t dev_read(struct file* file, char __user* buf, 
+                        size_t count, loff_t* f_pos)
 {
     char                  tmp[IO_BUF_MAX];
     size_t                len;
@@ -308,7 +307,7 @@ static ssize_t  dev_read(struct file* file, char __user* buf,
         *f_pos += retval;
     }
 
-    pr_info( "dht22:dev_read return count %d\n", retval);
+    pr_info( "dht22:%s return count %d, content %s\n", __func__, retval, tmp);
 
     return retval;
 }
