@@ -280,11 +280,9 @@ static int      dev_open(struct inode* inode, struct file* file)
      * humidity  545 => 54.5% = 0.545 = 545 / 1000 => "%d.%d"(h/1000,h%1000)
      * tempeture 236 => 23.6  = 236/ 10 => "%d.%d"(t/10,t%10)
      */
-    /*
     sprintf( dht22_data->buf, "%d.%d:%d.%d\n", 
              humidity/1000, humidity%1000,
              temperature/10, abs(temperature)%10);
-    */
     rwlock_init(&dht22_data->lock);
     file->private_data = dht22_data;
 
@@ -309,19 +307,22 @@ static ssize_t  dev_read(struct file* file, char __user* buf,
     unsigned int          len;
     int                   retval = 0;
 
+    if (*f_pos > 0)
+        return 0;
+
     read_lock(&p->lock);
     sprintf( tmp, "%d.%d:%d.%d\n", 
              humidity/1000, humidity%1000,
              temperature/10, abs(temperature)%10);
     read_unlock(&p->lock);
 
-    return -EFAULT;
-
     len = strlen(tmp);
     if (copy_to_user(buf, tmp, len))
         retval = -EFAULT;
-    else
-        retval = len;
+    else {
+        retval = len+1;
+        *f_pos += retval;
+    }
 
     pr_info( "dht22:dev_read return count %d\n", retval);
 
