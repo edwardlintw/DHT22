@@ -23,6 +23,13 @@
 #include <linux/hrtimer.h>
 #include <linux/delay.h>
 #include <linux/kobject.h>
+#include <linux/types.h>
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/sched.h>
+#include <linux/slab.h>
+#include <asm/current.h>
+#include <asm/uaccess.h>
 #define _INCLUDE_DHT22_DECL
 #include "dht22.h"
 
@@ -74,6 +81,19 @@ static struct attribute_group attr_group = {
     .attrs = dht22_attrs,
 };
 
+/*
+ * device node
+ */
+static int device_major = 0;
+static int num_devs = 1;
+static struct cdev            dht22_cdev;
+static struct dht22_data*     dht22_data;
+static struct file_operations dht22_fops = {
+    .open       = dev_open,
+    .release    = dev_close,
+    .read       = dev_read,
+};
+
 /* 
  * other global static vars
  */
@@ -113,6 +133,12 @@ static int __init dht22_init(void)
     int     ret;
 
     pr_err("Loading dht22 module...\n");
+
+    /* device node */
+
+    ret = init_dht22_dev();
+    if (ret)
+        return ret;
 
     /* setup GPIO */
     if (!gpio_is_valid(gpio)) {
@@ -195,7 +221,111 @@ static void __exit dht22_exit(void)
     hrtimer_cancel(&timeout_timer);
     cancel_work_sync(&process_work);
     kobject_put(dht22_kobj);
+    exit_dht22_dev();
     pr_err("dht22 unloaded.\n");
+}
+
+static int      init_dht22_dev(void)
+{
+    dev_t   dev = MKDEV(device_major, 0);
+    int     alloc_ret = 0;
+    int     cdev_err = 0;
+
+    alloc_ret = alloc_chrdev_region(&dev, 0, num_devs, "dht22");
+    if (alloc_ret)
+        goto error;
+
+    device_major = MAJOR(dev);
+    cdev_init(&dht22_cdev, &dht22_fops);
+    dht22_cdev.owner = THIS_MODULE;
+
+    cdev_err = cdev_add(&dht22_cdev, MKDEV(device_major, 0), num_devs);
+    if (cdev_err)
+        goto error;
+
+    pr_err("dht22 driver (major %d) installed\n", device_major);
+    return 0;
+
+error:
+    if (cdev_err == 0)
+        cdev_del(&dht22_cdev);
+    if (0 == alloc_ret)
+        unregister_chrdev_region(dev, num_devs);
+
+    return -1;    
+}
+
+static void     exit_dht22_dev(void)
+{
+    dev_t   dev = MKDEV(device_major, 0);
+
+    cdev_del(&dht22_cdev);
+    unregister_chrdev_region(dev, num_devs);
+}
+
+static int      dev_open(struct inode* inode, struct file* file)
+{
+    pr_info("dht22:%s major %d, minor %d (pid %d)\n", __func__,
+                                                      imajor(inode),
+                                                      iminor(inode),
+                                                      current->pid);
+
+    dht22_data = kmalloc(sizeof(struct dht22_data), GFP_KERNEL);
+    if (NULL == dht22_data) {
+        pr_err("dht22:%s not enough memory\n", __func__);
+        return -ENOMEM;
+    }
+
+    /*
+     * humidity  545 => 54.5% = 0.545 = 545 / 1000 => "%d.%d"(h/1000,h%1000)
+     * tempeture 236 => 23.6  = 236/ 10 => "%d.%d"(t/10,t%10)
+     */
+    /*
+    sprintf( dht22_data->buf, "%d.%d:%d.%d\n", 
+             humidity/1000, humidity%1000,
+             temperature/10, abs(temperature)%10);
+    */
+    rwlock_init(&dht22_data->lock);
+    file->private_data = dht22_data;
+
+    return 0;
+}
+
+static int      dev_close(struct inode* inode, struct file* file)
+{
+    if (file->private_data) {
+        kfree(file->private_data);
+        file->private_data = NULL;
+    }
+
+    return 0;
+}
+
+static ssize_t  dev_read(struct file* file, char __user* buf, 
+                         size_t count, loff_t* f_pos)
+{
+    struct dht22_data*    p =  file->private_data;
+    char                  tmp[IO_BUF_MAX];
+    unsigned int          len;
+    int                   retval = 0;
+
+    read_lock(&p->lock);
+    sprintf( tmp, "%d.%d:%d.%d\n", 
+             humidity/1000, humidity%1000,
+             temperature/10, abs(temperature)%10);
+    read_unlock(&p->lock);
+
+    return -EFAULT;
+
+    len = strlen(tmp);
+    if (copy_to_user(buf, tmp, len))
+        retval = -EFAULT;
+    else
+        retval = len;
+
+    pr_info( "dht22:dev_read return count %d\n", retval);
+
+    return retval;
 }
 
 static void init_dht22_timer(struct hrtimer* timer, 
@@ -323,6 +453,14 @@ static void process_results(struct work_struct* work)
         temperature = raw_temp;
         if (dbg_flag)
             pr_info("CRC: OK\n");
+        /* copy to device data */
+        /*
+        write_lock(&dht22_data->lock);
+        sprintf(dht22_data->buf, "%d.%d:%d.%d\n", 
+                humidity/1000, humidity%1000,
+                temperature/10, abs(temperature)%10);
+        write_unlock(&dht22_data->lock);
+        */
     }
     else if (dbg_flag)
         pr_info("CRC: Error\n");

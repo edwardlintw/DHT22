@@ -21,10 +21,18 @@
 #define AUTOUPDATE_SEC_MIN      3           /* 3 seconds */
 #define AUTOUPDATE_SEC_MAX      60000       /* 10 min */
 
+#define IO_BUF_MAX          64
+
 /*
  * proprietary to dht22.c, not seen by others
  */
 #ifdef _INCLUDE_DHT22_DECL
+
+struct dht22_data {
+    char        buf[IO_BUF_MAX];    
+    rwlock_t    lock;
+};
+
 
 static void process_results(struct work_struct* work);
 static irqreturn_t dht22_irq_handler(int irq, void* data); 
@@ -36,6 +44,12 @@ static void init_dht22_timer(struct hrtimer*,
                              enum hrtimer_restart (*)(struct hrtimer*),
                              bool,
                              int);
+
+static int      init_dht22_dev(void);
+static void     exit_dht22_dev(void);
+static int      dev_open(struct inode*, struct file*);
+static int      dev_close(struct inode*, struct file*);
+static ssize_t  dev_read(struct file*, char __user*, size_t, loff_t*);
 
 #define ATTR_RW(v) struct kobj_attribute v ## _attr = __ATTR_RW(v)
 #define ATTR_RO(v) struct kobj_attribute v ## _attr = __ATTR_RO(v)
