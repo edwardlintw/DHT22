@@ -88,14 +88,23 @@ static struct attribute_group attr_group = {
  * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
  */
 static int                      device_major = 0;
-static int                      num_devs = 1;
+static int                      num_devs = 2;
 static struct cdev              dht22_cdev;
 static dev_t                    dht22_dev;
 static struct class*            dht22_class = NULL;
 static struct file_operations   dht22_fops = {
     .open       = dev_open,
     .release    = dev_close,
-    .read       = dev_read,
+};
+static struct file_operations   dht22_fops_h = {
+    .open       = dev_open_h,
+    .read       = dev_read_h,
+    .release    = dev_close,
+};
+static struct file_operations   dht22_fops_t = {
+    .open       = dev_open_t,
+    .read       = dev_read_t,
+    .release    = dev_close,
 };
 
 /* 
@@ -231,10 +240,10 @@ static void __exit dht22_exit(void)
 
 static int init_dht22_dev(void)
 {
-    dev_t                   dev = MKDEV(device_major, 0);
-    int                     alloc_ret = 0;
-    int                     cdev_err = 0;
-    struct class_device*    class_dev = NULL;
+    dev_t dev = MKDEV(device_major, 0);
+    int   alloc_ret = 0;
+    int   cdev_err = 0;
+    int   i;
 
     alloc_ret = alloc_chrdev_region(&dev, 0, num_devs, "dht22");
     if (alloc_ret)
@@ -261,14 +270,11 @@ static int init_dht22_dev(void)
      * NOET: the following 5th param is
      * "dht22-%d", NOT "dht22%d"
      */
-    dht22_dev = MKDEV(device_major, 0);
-    class_dev = (struct class_device*)device_create(dht22_class, 
-                                                    NULL, 
-                                                    dht22_dev, 
-                                                    NULL, 
-                                                    "dht22-%d", 0);
+    for (i = 0; i < num_devs; ++i) {
+        dht22_dev = MKDEV(device_major, i);
+        device_create(dht22_class, NULL, dht22_dev, NULL, "dht22-%d", i);
+    }
     
-
     pr_err("dht22 driver (major %d) installed\n", device_major);
     return 0;
 
@@ -301,6 +307,31 @@ static int dev_open(struct inode* inode, struct file* file)
                                                          current->pid);
     }
 
+    switch (iminor(inode)) {
+        case 0: /* humidity */
+            file->f_op = &dht22_fops_h;
+            break;
+        case 1: /* temperature */
+            file->f_op = &dht22_fops_t;
+            break;
+        default:
+            return -ENXIO;
+    }
+
+    if (file->f_op && file->f_op->open)
+        return file->f_op->open(inode, file);
+
+    return 0;
+}
+
+static int dev_open_h(struct inode* inode, struct file* file)
+{
+    file->private_data = NULL;
+
+    return 0;
+}
+static int dev_open_t(struct inode* inode, struct file* file)
+{
     file->private_data = NULL;
 
     return 0;
@@ -313,8 +344,8 @@ static int dev_close(struct inode* inode, struct file* file)
     return 0;
 }
 
-static ssize_t dev_read(struct file* file, char __user* buf, 
-                        size_t count, loff_t* f_pos)
+static ssize_t dev_read_h(struct file* file, char __user* buf, 
+                          size_t count, loff_t* f_pos)
 {
     char                  tmp[IO_BUF_MAX];
     size_t                len;
@@ -323,9 +354,7 @@ static ssize_t dev_read(struct file* file, char __user* buf,
     if (*f_pos > 0)
         return 0;
 
-    sprintf( tmp, "%d.%d:%d.%d\n", 
-             humidity/1000, humidity%1000,
-             temperature/10, abs(temperature)%10);
+    sprintf( tmp, "%d.%d\n", humidity/1000, humidity%1000);
 
     len = strlen(tmp);
     len = min(len, count-1);
@@ -337,7 +366,30 @@ static ssize_t dev_read(struct file* file, char __user* buf,
         *f_pos += retval;
     }
 
-    pr_info( "dht22:%s return count %d, content %s\n", __func__, retval, tmp);
+    return retval;
+}
+
+static ssize_t dev_read_t(struct file* file, char __user* buf, 
+                          size_t count, loff_t* f_pos)
+{
+    char                  tmp[IO_BUF_MAX];
+    size_t                len;
+    int                   retval = 0;
+
+    if (*f_pos > 0)
+        return 0;
+
+    sprintf( tmp, "%d.%d\n", temperature/10, abs(temperature)%10);
+
+    len = strlen(tmp);
+    len = min(len, count-1);
+    tmp[len] = '\0';
+    if (copy_to_user(buf, tmp, len))
+        retval = -EFAULT;
+    else {
+        retval = len+1;
+        *f_pos += retval;
+    }
 
     return retval;
 }
