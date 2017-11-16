@@ -24,11 +24,11 @@ int main(int argc, char* argv[])
     struct thread_param_t   params [2] = {  {
             .path = "/sys/kernel/dht22/temperature",
             .name = "temperature",
-            .time_out = -1,
+            .time_out = 20000, /* ms */
         }, {
             .path = "/sys/kernel/dht22/humidity",
             .name = "humidity",
-            .time_out = -1,
+            .time_out = 20000, /* ms */
         }
     };
 
@@ -43,22 +43,20 @@ int main(int argc, char* argv[])
 
 void* thread_work(void* arg)
 {
-    struct thread_param_t*  param = (struct thread_param_t*)arg;
-    struct thread_param_t   param_dup;
-    struct pollfd           pfd;
+    struct thread_param_t   param;
+    struct pollfd           pfd = { .events = POLLPRI };
     int                     ret = 1;
     char                    buf[BUF_MAX];
 
-    memcpy(&param_dup, param, sizeof(param_dup));
-    pfd.events = POLLPRI;
-    do {
+    memcpy((void*)&param, arg, sizeof(param));
+    while (1) {
         /*
          * open/close in loop is a must,
          * or poll() won't be block
          */
-        pfd.fd = open(param_dup.path, O_RDONLY);
+        pfd.fd = open(param.path, O_RDONLY);
         if (-1 == pfd.fd) {
-            printf("Can't open %s\n", param_dup.path);
+            printf("Can't open %s\n", param.path);
             break;
         }
         /*
@@ -66,17 +64,16 @@ void* thread_work(void* arg)
          * or poll() won't be blocked
          */
         read(pfd.fd, buf, sizeof(buf));
-        ret = poll(&pfd, 1, param_dup.time_out);
+        ret = poll(&pfd, 1, param.time_out);
         if (0 > ret) 
             printf("poll error\n");
         else if (0 == ret)
             printf("poll timeout\n");
         else
-            printf("%s: %s", param_dup.name, buf);
+            printf("%s: %s", param.name, buf);
+
         close(pfd.fd);
-
-    } while (1);
-
+    }
 
     return NULL;
 }
