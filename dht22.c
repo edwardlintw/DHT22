@@ -85,7 +85,7 @@ static struct attribute_group attr_group = {
  * device node
  * must add a rule file to RPi '/etc/udev/rules.d/51-dht22.rules' 
  * content:
- * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
+ * KERNEL="dht22:[0-9]*", GROUP="root", MODE="0444"
  */
 static int                      device_major = 0;
 static int                      num_devs = 2;
@@ -237,8 +237,8 @@ static void __exit dht22_exit(void)
 }
 
 /* to create
- * "/dev/dht22-0" for reading humidity, and
- * "/dev/dht22-1" for reading temperature
+ * "/dev/dht22:0" for reading humidity, and
+ * "/dev/dht22:1" for reading temperature
  */
 static int dht22_dev_init(void)
 {
@@ -270,14 +270,14 @@ static int dht22_dev_init(void)
     /*
      * must add a file to RPi '/etc/udev/rules.d/51-dht22.rules' 
      * content:
-     * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
+     * KERNEL="dht22:[0-9]*", GROUP="root", MODE="0444"
      *
      * NOET: the following 5th param is
-     * "dht22-%d", NOT "dht22%d"
+     * "dht22:%d", NOT "dht22%d"
      */
     for (i = 0; i < num_devs; ++i) {
         dht22_dev = MKDEV(device_major, i);
-        device_create(dht22_class, NULL, dht22_dev, NULL, "dht22-%d", i);
+        device_create(dht22_class, NULL, dht22_dev, NULL, "dht22:%d", i);
     }
     
     pr_err("dht22 driver (major %d) installed\n", device_major);
