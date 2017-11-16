@@ -83,7 +83,7 @@ static struct attribute_group attr_group = {
 
 /*
  * device node
- * must add a file to RPi '/etc/udev/rules.d/51-dht22.rules' 
+ * must add a rule file to RPi '/etc/udev/rules.d/51-dht22.rules' 
  * content:
  * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
  */
@@ -94,7 +94,6 @@ static dev_t                    dht22_dev;
 static struct class*            dht22_class = NULL;
 static struct file_operations   dht22_fops = {
     .open       = dev_open,
-    .release    = dev_close,
 };
 static struct file_operations   dht22_fops_h = {
     .open       = dev_open_h,
@@ -132,7 +131,7 @@ static int                  dbg_irq_count  = 0;
  * 22~30us HIGH is 0, 68~75us HIGH is 1
  * DHT22 send out 2-byte humidity, 2-byte temperature and 1-byte parity(CRC)
  */
-static int                              high_time[40] = { 0 };
+static int high_time[40] = { 0 };
 static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
 
 /* 
@@ -148,8 +147,7 @@ static int __init dht22_init(void)
     pr_err("Loading dht22 module...\n");
 
     /* device node */
-
-    ret = init_dht22_dev();
+    ret = dht22_dev_init();
     if (ret)
         return ret;
 
@@ -205,12 +203,12 @@ static int __init dht22_init(void)
      * no matter autoupdate is on or off
      * at least DHT22 will be triggered once
      */
-    init_dht22_timer(&autoupdate_timer, autoupdate_func, true, 2);
+    dht22_timer_init(&autoupdate_timer, autoupdate_func, true, 2);
     /*
      * setup timeout timer, but not start yet
      * it'll start when triggering DHT22 to request data
      */
-    init_dht22_timer(&timeout_timer, timeout_func, false, 0);
+    dht22_timer_init(&timeout_timer, timeout_func, false, 0);
 
     pr_err("dht22 loaded.\n");
 
@@ -234,13 +232,17 @@ static void __exit dht22_exit(void)
     hrtimer_cancel(&timeout_timer);
     cancel_work_sync(&process_work);
     kobject_put(dht22_kobj);
-    exit_dht22_dev();
+    dht22_dev_exit();
     pr_err("dht22 unloaded.\n");
 }
 
-static int init_dht22_dev(void)
+/* to create
+ * "/dev/dht22-0" for reading humidity, and
+ * "/dev/dht22-1" for reading temperature
+ */
+static int dht22_dev_init(void)
 {
-    dev_t dev = MKDEV(device_major, 0);
+    dev_t dev = MKDEV(device_major, 0); /* dynamic allocation of 'major' */
     int   alloc_ret = 0;
     int   cdev_err = 0;
     int   i;
@@ -258,6 +260,9 @@ static int init_dht22_dev(void)
     if (cdev_err)
         goto error;
 
+    /* 
+     * create class first, and device files associated to this class
+     */
     dht22_class = class_create(THIS_MODULE, "dht22");
     if (IS_ERR(dht22_class))
         goto error;
@@ -287,13 +292,12 @@ error:
     return -1;    
 }
 
-static void exit_dht22_dev(void)
+static void dht22_dev_exit(void)
 {
     dev_t   dev = MKDEV(device_major, 0);
 
     device_destroy(dht22_class, dht22_dev);
     class_destroy(dht22_class);
-
     cdev_del(&dht22_cdev);
     unregister_chrdev_region(dev, num_devs);
 }
@@ -318,6 +322,7 @@ static int dev_open(struct inode* inode, struct file* file)
             return -ENXIO;
     }
 
+    file->private_data = NULL;
     if (file->f_op && file->f_op->open)
         return file->f_op->open(inode, file);
 
@@ -326,14 +331,10 @@ static int dev_open(struct inode* inode, struct file* file)
 
 static int dev_open_h(struct inode* inode, struct file* file)
 {
-    file->private_data = NULL;
-
     return 0;
 }
 static int dev_open_t(struct inode* inode, struct file* file)
 {
-    file->private_data = NULL;
-
     return 0;
 }
 
@@ -347,30 +348,17 @@ static int dev_close(struct inode* inode, struct file* file)
 static ssize_t dev_read_h(struct file* file, char __user* buf, 
                           size_t count, loff_t* f_pos)
 {
-    char                  tmp[IO_BUF_MAX];
-    size_t                len;
-    int                   retval = 0;
-
-    if (*f_pos > 0)
-        return 0;
-
-    sprintf( tmp, "%d.%d\n", humidity/1000, humidity%1000);
-
-    len = strlen(tmp);
-    len = min(len, count-1);
-    tmp[len] = '\0';
-    if (copy_to_user(buf, tmp, len))
-        retval = -EFAULT;
-    else {
-        retval = len+1;
-        *f_pos += retval;
-    }
-
-    return retval;
+    return read_data(file, buf, count, f_pos, humidity, 1000);
 }
 
 static ssize_t dev_read_t(struct file* file, char __user* buf, 
                           size_t count, loff_t* f_pos)
+{
+    return read_data(file, buf, count, f_pos, temperature, 10);
+}
+
+static ssize_t read_data(struct file* file, char __user* buf, size_t count, 
+                         loff_t* f_pos,  int data, int factor)
 {
     char                  tmp[IO_BUF_MAX];
     size_t                len;
@@ -379,7 +367,7 @@ static ssize_t dev_read_t(struct file* file, char __user* buf,
     if (*f_pos > 0)
         return 0;
 
-    sprintf( tmp, "%d.%d\n", temperature/10, abs(temperature)%10);
+    sprintf( tmp, "%d.%d\n", data/factor, abs(data)%factor);
 
     len = strlen(tmp);
     len = min(len, count-1);
@@ -394,7 +382,7 @@ static ssize_t dev_read_t(struct file* file, char __user* buf,
     return retval;
 }
 
-static void init_dht22_timer(struct hrtimer* timer, 
+static void dht22_timer_init(struct hrtimer* timer, 
                              enum hrtimer_restart (*func)(struct hrtimer*),
                              bool start_now,
                              int  wait_sec)
@@ -679,7 +667,7 @@ module_init(dht22_init);
 module_exit(dht22_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Edward Lin");
+MODULE_AUTHOR("Edward Lin <edwardlin.tw@gmail.com");
 MODULE_DESCRIPTION("A driver for DHT22 humidity/temperature sensor");
 MODULE_VERSION("0.1");
 

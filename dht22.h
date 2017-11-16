@@ -34,13 +34,13 @@ static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer);
 static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer);
 static void to_trigger_dht22(void);
 static void trigger_dht22(void);
-static void init_dht22_timer(struct hrtimer*, 
+static void dht22_timer_init(struct hrtimer*, 
                              enum hrtimer_restart (*)(struct hrtimer*),
                              bool,
                              int);
 
-static int      init_dht22_dev(void);
-static void     exit_dht22_dev(void);
+static int      dht22_dev_init(void);
+static void     dht22_dev_exit(void);
 static int      dev_open(struct inode*, struct file*);
 static int      dev_close(struct inode*, struct file*);
 /* humidity fops */
@@ -49,6 +49,8 @@ static ssize_t  dev_read_h(struct file*, char __user*, size_t, loff_t*);
 /* temperature fops */
 static int      dev_open_t(struct inode*, struct file*);
 static ssize_t  dev_read_t(struct file*, char __user*, size_t, loff_t*);
+static ssize_t  read_data(struct file*, char __user*, size_t, loff_t*, int,
+                          int factor);
 
 #define ATTR_RW(v) struct kobj_attribute v ## _attr = __ATTR_RW(v)
 #define ATTR_RO(v) struct kobj_attribute v ## _attr = __ATTR_RO(v)
