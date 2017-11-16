@@ -83,11 +83,16 @@ static struct attribute_group attr_group = {
 
 /*
  * device node
+ * must add a file to RPi '/etc/udev/rules.d/51-dht22.rules' 
+ * content:
+ * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
  */
-static int device_major = 0;
-static int num_devs = 1;
-static struct cdev            dht22_cdev;
-static struct file_operations dht22_fops = {
+static int                      device_major = 0;
+static int                      num_devs = 1;
+static struct cdev              dht22_cdev;
+static dev_t                    dht22_dev;
+static struct class*            dht22_class = NULL;
+static struct file_operations   dht22_fops = {
     .open       = dev_open,
     .release    = dev_close,
     .read       = dev_read,
@@ -226,9 +231,10 @@ static void __exit dht22_exit(void)
 
 static int init_dht22_dev(void)
 {
-    dev_t   dev = MKDEV(device_major, 0);
-    int     alloc_ret = 0;
-    int     cdev_err = 0;
+    dev_t                   dev = MKDEV(device_major, 0);
+    int                     alloc_ret = 0;
+    int                     cdev_err = 0;
+    struct class_device*    class_dev = NULL;
 
     alloc_ret = alloc_chrdev_region(&dev, 0, num_devs, "dht22");
     if (alloc_ret)
@@ -237,10 +243,31 @@ static int init_dht22_dev(void)
     device_major = MAJOR(dev);
     cdev_init(&dht22_cdev, &dht22_fops);
     dht22_cdev.owner = THIS_MODULE;
+    dht22_cdev.ops  = &dht22_fops;
 
     cdev_err = cdev_add(&dht22_cdev, MKDEV(device_major, 0), num_devs);
     if (cdev_err)
         goto error;
+
+    dht22_class = class_create(THIS_MODULE, "dht22");
+    if (IS_ERR(dht22_class))
+        goto error;
+
+    /*
+     * must add a file to RPi '/etc/udev/rules.d/51-dht22.rules' 
+     * content:
+     * KERNEL="dht22-[0-9]*", GROUP="root", MODE="0444"
+     *
+     * NOET: the following 5th param is
+     * "dht22-%d", NOT "dht22%d"
+     */
+    dht22_dev = MKDEV(device_major, 0);
+    class_dev = (struct class_device*)device_create(dht22_class, 
+                                                    NULL, 
+                                                    dht22_dev, 
+                                                    NULL, 
+                                                    "dht22-%d", 0);
+    
 
     pr_err("dht22 driver (major %d) installed\n", device_major);
     return 0;
@@ -257,6 +284,9 @@ error:
 static void exit_dht22_dev(void)
 {
     dev_t   dev = MKDEV(device_major, 0);
+
+    device_destroy(dht22_class, dht22_dev);
+    class_destroy(dht22_class);
 
     cdev_del(&dht22_cdev);
     unregister_chrdev_region(dev, num_devs);
