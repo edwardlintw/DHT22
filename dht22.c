@@ -434,7 +434,9 @@ static void process_results(struct work_struct* work)
 
     if (data[4] == ((data[0]+data[1]+data[2]+data[3]) & 0x00FF)) {
         humidity    = raw_humidity;
+        sysfs_notify(dht22_kobj, NULL, "humidity");
         temperature = raw_temp;
+        sysfs_notify(dht22_kobj, NULL, "temperature");
         if (dbg_flag)
             pr_info("CRC: OK\n");
     }
