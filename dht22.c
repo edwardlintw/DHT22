@@ -130,8 +130,8 @@ static int                  dbg_total_read = 0;
 
 /*
  * int[40] to record signal HIGH time duration, for calculating bit 0/1
- * 22~30us HIGH is 0, 68~75us HIGH is 1
- * DHT22 send out 2-byte humidity, 2-byte temperature and 1-byte parity(CRC)
+ * DHT22 spec: 22~30us HIGH is 0, 68~75us HIGH is 1
+ * DHT22 sends out 2-byte humidity, 2-byte temperature and 1-byte parity(CRC)
  */
 static int high_time[40] = { 0 };
 static enum { dht22_idle, dht22_working } dht22_state = dht22_idle;
@@ -202,8 +202,8 @@ static int __init dht22_init(void)
     }
 
     /*
-     * wait for 2sec for the first trigger
-     * no matter autoupdate is on or off
+     * wait for 2sec (for DHT22 warming up) for the first trigger
+     * no matter autoupdate is ON or OFF
      * at least DHT22 will be triggered once
      */
     dht22_timer_init(&autoupdate_timer, autoupdate_func, true, 2);
@@ -411,22 +411,15 @@ static void to_trigger_dht22(void)
         pr_info("DHT22 is busy, ignore trigger event.....\n");
         return;
     }
-    /* reset statictics counter and set state as 'dht22_working' */
+
     low_irq_count = 0;
     irq_count = 0;
     dht22_state   = dht22_working;
 
-    /*
-     * start timeout_timer
-     * if the host receive fiewer than 86 interrupts, the timeout_func() will
-     * reset state to 'dht22_idle'
-     */
     hrtimer_start(&timeout_timer, 
                   ktime_set(timeout_time, NSEC_PER_MSEC * timeout_time_ms), 
                   HRTIMER_MODE_REL);
-    /*
-     * trigger DHT22
-     */
+
     trigger_dht22();
 }
 
@@ -450,6 +443,10 @@ static void trigger_dht22(void)
 
 static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
 {
+    ++dbg_total_read;
+    /* pull high, and wait for next trigger */
+    gpio_direction_output(gpio, high);
+
     if (dht22_idle != dht22_state) {
         /*
          * host receive fewer yhan 86 interrupts
@@ -460,7 +457,6 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
         ++dbg_fail_read;
         dht22_state = dht22_idle;
     }
-    ++dbg_total_read;
     if (dbg_flag) {
         pr_info("total read %d, fail %d\n", dbg_total_read, dbg_fail_read);
         pr_info("last IRQ count (should be 86) %d\n", irq_count);
@@ -474,8 +470,8 @@ static enum hrtimer_restart autoupdate_func(struct hrtimer *hrtimer)
         to_trigger_dht22();
 
     /*
-     * keep the timerr continue flying
      * only trigger DHT22 when 'autoupdate' is enabled
+     * so keep the timerr continue flying
      */ 
     hrtimer_forward(hrtimer, ktime_get(), ktime_set(autoupdate_sec, 0));
     return HRTIMER_RESTART;
@@ -491,7 +487,7 @@ static void process_results(struct work_struct* work)
 
     /* 
      * determine bit value 0 or 1
-     * 22-30us is 0, 68~75us is 1
+     * DHT22 spec: 22-30us is 0, 68~75us is 1
      * since DHT22's condition may be not as precise as spec, 
      * threshoud 50us is taken for decision making
      */
@@ -504,8 +500,8 @@ static void process_results(struct work_struct* work)
     raw_temp     = (data[2] << 8) | data[3];
 
     /* be aware of temperature below 0°C */
-    if (1 == data[2] >> 7)
-        raw_temp = (raw_temp & 0x7FFF) * -1;
+    if (1 == (data[2] & 0x8000))
+        raw_temp = -(raw_temp & 0x7FFF);
    
     pr_info("humidity    = %d.%d\n", raw_humidity/10, raw_humidity%10);
     pr_info("temperature = %d.%d\n", raw_temp/10, abs(raw_temp)%10);
@@ -520,6 +516,11 @@ static void process_results(struct work_struct* work)
         humidity    = raw_humidity;
         temperature = raw_temp;
         write_unlock(&lock);
+        /*
+         * notify all user processes which called poll() to fetch
+         * humidity (via /dev/dht22:0) and/or temperature (via /dev/dht22:1)
+         * refer to sample user space application: poll.c
+         */
         sysfs_notify(dht22_kobj, NULL, "humidity");
         sysfs_notify(dht22_kobj, NULL, "temperature");
         if (dbg_flag)
@@ -529,11 +530,6 @@ static void process_results(struct work_struct* work)
         pr_info("CRC: Error\n");
     else
         ;
-
-    dht22_state = dht22_idle;
-
-    /* pull high, and wait for next trigger */
-    gpio_direction_output(gpio, high);
 }
 
 static irqreturn_t dht22_irq_handler(int irq, void* data)
@@ -549,7 +545,7 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
 
     /* 
      * capture falling-edge interrupt and calculating
-     * previous one high signal time duration, write it down
+     * previous one high signal time duration, record it down
      * for calculating individual bit is 0 or 1 later
      */
     if (0 == val) {
@@ -586,6 +582,8 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
 /*
  * sysfs attributes
  * the followings two declared in dht22.h
+ *
+ * (lazy macros)
  *
 #define DECL_ATTR_SHOW(F)  ssize_t F ## _show (struct kobject* kobj,\
                                                struct kobj_attribute* attr,\
