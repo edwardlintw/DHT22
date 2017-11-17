@@ -109,11 +109,13 @@ static struct file_operations   dht22_fops_t = {
 /* 
  * other global static vars
  */
+static rwlock_t             lock;
 static int                  irq_number;
 static struct hrtimer       autoupdate_timer;
 static struct hrtimer       timeout_timer;
 static struct timespec64    prev_high_low_time;
 static const int            timeout_time = 1;  /* 1 second */
+static const int            timeout_time_ms = 500; /* 0.5 second */
 static int                  low_irq_count = 0;
 static int                  humidity = 0;      /* cache last humidity */
 static int                  temperature = 0;   /* cache last temperature */
@@ -145,6 +147,7 @@ static int __init dht22_init(void)
     int     ret;
 
     pr_err("Loading dht22 module...\n");
+    rwlock_init(&lock);
 
     /* device node */
     ret = dht22_dev_init();
@@ -348,13 +351,21 @@ static int dev_close(struct inode* inode, struct file* file)
 static ssize_t dev_read_h(struct file* file, char __user* buf, 
                           size_t count, loff_t* f_pos)
 {
-    return read_data(file, buf, count, f_pos, humidity, 1000);
+    int data;
+    read_lock(&lock);
+    data = humidity;
+    read_unlock(&lock);
+    return read_data(file, buf, count, f_pos, data, 1000);
 }
 
 static ssize_t dev_read_t(struct file* file, char __user* buf, 
                           size_t count, loff_t* f_pos)
 {
-    return read_data(file, buf, count, f_pos, temperature, 10);
+    int data;
+    read_lock(&lock);
+    data = temperature;
+    read_unlock(&lock);
+    return read_data(file, buf, count, f_pos, data, 10);
 }
 
 static ssize_t read_data(struct file* file, char __user* buf, size_t count, 
@@ -410,7 +421,9 @@ static void to_trigger_dht22(void)
      * if the host receive fiewer than 86 interrupts, the timeout_func() will
      * reset state to 'dht22_idle'
      */
-    hrtimer_start(&timeout_timer, ktime_set(timeout_time, 0), HRTIMER_MODE_REL);
+    hrtimer_start(&timeout_timer, 
+                  ktime_set(timeout_time, NSEC_PER_MSEC * timeout_time_ms), 
+                  HRTIMER_MODE_REL);
     /*
      * trigger DHT22
      */
@@ -503,9 +516,11 @@ static void process_results(struct work_struct* work)
     }
 
     if (data[4] == ((data[0]+data[1]+data[2]+data[3]) & 0x00FF)) {
+        write_lock(&lock);
         humidity    = raw_humidity;
-        sysfs_notify(dht22_kobj, NULL, "humidity");
         temperature = raw_temp;
+        write_unlock(&lock);
+        sysfs_notify(dht22_kobj, NULL, "humidity");
         sysfs_notify(dht22_kobj, NULL, "temperature");
         if (dbg_flag)
             pr_info("CRC: OK\n");
@@ -634,13 +649,21 @@ static DECL_ATTR_STORE(autoupdate_sec)
 /* cat humidity */
 static DECL_ATTR_SHOW (humidity)
 {
-    return sprintf(buf, "%d.%d%%\n", humidity/10, humidity%10);
+    int data;
+    read_lock(&lock);
+    data = humidity;
+    read_unlock(&lock);
+    return sprintf(buf, "%d.%d%%\n", data/10, data%10);
 }
 
 /* cat temperature */
 static DECL_ATTR_SHOW (temperature)
 {
-    return sprintf(buf, "%d.%d°C\n", temperature/10, abs(temperature)%10);
+    int data;
+    read_lock(&lock);
+    data = temperature;
+    read_unlock(&lock);
+    return sprintf(buf, "%d.%d°C\n", data/10, abs(data)%10);
 }
 
 /* echo 1 > trigger */
