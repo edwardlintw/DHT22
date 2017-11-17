@@ -10,11 +10,8 @@ all: dht22 poll
 dht22: dht22.c dht22.h
 	make -C $(KPATH) ARCH=arm CROSS_COMPILE=$(CROSS) SUBDIRS=$(PWD) modules
 
-poll: poll.o
-	$(CC) poll.o -lc -lpthread -o poll
-
-poll.o: poll.c
-	$(CC) -c poll.c
+poll: poll.c
+	$(CC) -o poll -lc -lpthread poll.c
 
 clean:
 	rm -rf *.o *.ko .*cmd .tmp* core *.i *.mod.c modules.* Module.* poll
