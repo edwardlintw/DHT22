@@ -117,6 +117,7 @@ static struct timespec64    prev_high_low_time;
 static const int            timeout_time = 1;  /* 1 second */
 static const int            timeout_time_ms = 500; /* 0.5 second */
 static int                  low_irq_count = 0;
+static int                  irq_count  = 0;
 static int                  humidity = 0;      /* cache last humidity */
 static int                  temperature = 0;   /* cache last temperature */
 static struct kobject*      dht22_kobj;
@@ -126,7 +127,6 @@ static bool                 dbg_flag = false;  /* log more info if true */
  */
 static int                  dbg_fail_read  = 0;
 static int                  dbg_total_read = 0;
-static int                  dbg_irq_count  = 0;
 
 /*
  * int[40] to record signal HIGH time duration, for calculating bit 0/1
@@ -413,7 +413,7 @@ static void to_trigger_dht22(void)
     }
     /* reset statictics counter and set state as 'dht22_working' */
     low_irq_count = 0;
-    dbg_irq_count = 0;
+    irq_count = 0;
     dht22_state   = dht22_working;
 
     /*
@@ -463,7 +463,7 @@ static enum hrtimer_restart timeout_func(struct hrtimer* hrtimer)
     ++dbg_total_read;
     if (dbg_flag) {
         pr_info("total read %d, fail %d\n", dbg_total_read, dbg_fail_read);
-        pr_info("last IRQ count (should be 86) %d\n", dbg_irq_count);
+        pr_info("last IRQ count (should be 86) %d\n", irq_count);
     }
     return HRTIMER_NORESTART;
 }
@@ -571,7 +571,13 @@ static irqreturn_t dht22_irq_handler(int irq, void* data)
         }
         ++low_irq_count;
     }
-    ++dbg_irq_count;
+
+    if (86 == ++irq_count) {
+        dht22_state = dht22_idle;
+        if (dbg_flag)
+            pr_info("DHT22 received 86 interrupts\n");
+    }
+    
     prev_high_low_time = now;
 
     return IRQ_HANDLED;
