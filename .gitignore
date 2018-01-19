@@ -7,3 +7,4 @@ Module.symvers
 *.sh
 *.ko
 poll
+DOC/
